@@ -39,6 +39,13 @@ def get_connection(project_name: str) -> duckdb.DuckDBPyConnection:
 
 SCHEMA_SQL = """
 
+-- Secuencias para IDs autoincrementales
+CREATE SEQUENCE IF NOT EXISTS seq_movimientos START 1;
+CREATE SEQUENCE IF NOT EXISTS seq_ventas START 1;
+CREATE SEQUENCE IF NOT EXISTS seq_conteos START 1;
+CREATE SEQUENCE IF NOT EXISTS seq_costo_sku START 1;
+CREATE SEQUENCE IF NOT EXISTS seq_periodos_ingesta START 1;
+
 -- ============================================================
 -- MOVIMIENTOS
 -- Exportación del ERP. Cubre VTA (ventas), AJU (ajustes) y
@@ -46,12 +53,13 @@ SCHEMA_SQL = """
 -- por sucursal y SKU.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS movimientos (
-    id               INTEGER PRIMARY KEY,   -- autoincremental, asignado en ingesta
+    id               INTEGER PRIMARY KEY DEFAULT nextval('seq_movimientos'),
     fecha            DATE        NOT NULL,
     tipomov          VARCHAR     NOT NULL,   -- VTA, AJU, REM
     tipo             VARCHAR,               -- subtipo interno del ERP
     numero           VARCHAR     NOT NULL,  -- número de comprobante
     codigodepo       VARCHAR     NOT NULL,  -- código de sucursal
+    nombre           VARCHAR,               -- nombre del cliente/proveedor (del ERP)
     codigo           VARCHAR     NOT NULL,  -- SKU
     costo            DECIMAL(18,4),         -- costo unitario (formato AR: coma decimal)
     ingreso          DECIMAL(18,4),
@@ -81,7 +89,7 @@ CREATE INDEX IF NOT EXISTS idx_mov_periodo
 -- Cod.Dep. mapea directamente a codigodepo de movimientos.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS ventas (
-    id               INTEGER PRIMARY KEY,
+    id               INTEGER PRIMARY KEY DEFAULT nextval('seq_ventas'),
     codigodepo       VARCHAR     NOT NULL,  -- sucursal
     codigo           VARCHAR     NOT NULL,  -- SKU
     descripcion      VARCHAR,
@@ -107,7 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_ventas_sku_depo_periodo
 -- al momento del conteo.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS conteos (
-    id                INTEGER PRIMARY KEY,
+    id                INTEGER PRIMARY KEY DEFAULT nextval('seq_conteos'),
     codigodepo        VARCHAR     NOT NULL,
     fecha_conteo      DATE        NOT NULL,
     numero_inventario VARCHAR,              -- ID del inventario en el ERP
@@ -135,7 +143,7 @@ CREATE INDEX IF NOT EXISTS idx_conteos_sku_depo_fecha
 -- análisis inter-conteo.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS costo_sku_historial (
-    id               INTEGER PRIMARY KEY,
+    id               INTEGER PRIMARY KEY DEFAULT nextval('seq_costo_sku'),
     codigo           VARCHAR     NOT NULL,  -- SKU
     codigodepo       VARCHAR     NOT NULL,  -- sucursal del remito
     fecha            DATE        NOT NULL,  -- fecha del remito
@@ -149,12 +157,58 @@ CREATE INDEX IF NOT EXISTS idx_costo_sku_fecha
 
 
 -- ============================================================
+-- DEPOSITOS
+-- Catálogo de sucursales/depósitos. Upsert por codigodepo.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS depositos (
+    codigodepo   VARCHAR PRIMARY KEY,
+    nombre       VARCHAR,
+    direccion    VARCHAR,
+    abreviacion  VARCHAR,
+    fecha_ingesta TIMESTAMP
+);
+
+
+-- ============================================================
+-- ESTRUCTURA
+-- Catálogo de rubros con jerarquía. Upsert por rubro.
+-- Una fila por Rubro — no por SKU.
+-- Join: articulos.rubro → estructura.rubro → jerarquía completa.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS estructura (
+    rubro            VARCHAR PRIMARY KEY,
+    super_rubro      VARCHAR,
+    gran_super_rubro VARCHAR,
+    fecha_ingesta    TIMESTAMP
+);
+
+
+-- ============================================================
+-- ARTICULOS
+-- Catálogo de SKUs. Upsert por codigo — nunca se borra.
+-- rubro es FK hacia estructura.rubro.
+-- EAN: código de barras. Clase: A/B/C para análisis Pareto
+-- (en desuso actualmente, se instrumentará próximamente).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS articulos (
+    codigo        VARCHAR PRIMARY KEY,
+    descripcion   VARCHAR,
+    rubro         VARCHAR,               -- FK → estructura.rubro
+    marca         VARCHAR,
+    ean           VARCHAR,               -- código de barras
+    clase         VARCHAR,               -- A, B, C (Pareto)
+    activo        BOOLEAN,
+    fecha_ingesta TIMESTAMP
+);
+
+
+-- ============================================================
 -- PERIODOS INGESTA
 -- Registro de qué archivos/períodos fueron procesados.
 -- Permite detectar duplicados y ejecutar reemplazos explícitos.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS periodos_ingesta (
-    id               INTEGER PRIMARY KEY,
+    id               INTEGER PRIMARY KEY DEFAULT nextval('seq_periodos_ingesta'),
     tabla            VARCHAR     NOT NULL,  -- 'movimientos', 'ventas', 'conteos'
     periodo          VARCHAR     NOT NULL,  -- identificador del período
     codigodepo       VARCHAR,               -- NULL = aplica a todos
@@ -177,7 +231,10 @@ def setup(project_name: str, reset: bool = False) -> None:
 
     if reset:
         print(f"  [RESET] Eliminando tablas existentes en '{project_name}'...")
-        tables = ["movimientos", "ventas", "conteos", "costo_sku_historial", "periodos_ingesta"]
+        tables = [
+            "movimientos", "ventas", "conteos", "costo_sku_historial",
+            "periodos_ingesta", "depositos", "estructura", "articulos"
+        ]
         for table in tables:
             conn.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
 
