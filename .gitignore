@@ -1,0 +1,23 @@
+# MermaIQ — .gitignore
+
+# Bases de datos (datos de clientes, nunca al repo)
+projects/
+*.duckdb
+
+# Exports generados
+exports/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

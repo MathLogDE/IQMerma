@@ -1,0 +1,43 @@
+# ============================================================
+# MermaIQ — Analizador de merma de inventario
+# Python 3.12 | Generado: 2026-06-01
+# ============================================================
+
+# --- Base de datos -----------------------------------------
+# DuckDB: motor columnar embebido, un solo archivo .duckdb por proyecto
+# Sin servidor, sin instalación extra. Ideal para análisis de grandes
+# volúmenes (13 sucursales x 49k SKUs x histórico).
+duckdb==1.5.3
+
+# --- Procesamiento de datos --------------------------------
+# Pandas 3.x: API más estricta que 2.x (Copy-on-Write habilitado por defecto)
+# Evita efectos secundarios silenciosos al mutar DataFrames.
+# NOTA: pandas 3.x requiere streamlit >= 1.46 (ver más abajo)
+pandas==3.0.3
+
+# NumPy: operaciones numéricas vectorizadas (dependencia de pandas)
+numpy==2.4.6
+
+# --- Lectura y escritura de Excel --------------------------
+# openpyxl: leer los archivos de entrada del ERP y generar reportes
+# Excel de salida con formato, colores y estilos.
+openpyxl==3.1.5
+
+# --- Interfaz de usuario -----------------------------------
+# Streamlit: app web local sin HTML/JS. Se corre con: streamlit run app.py
+# >= 1.46 requerido para soporte de pandas 3.x sin downgrade
+streamlit==1.58.0
+
+# --- Visualizaciones interactivas --------------------------
+# Plotly: gráficos interactivos en el dashboard Streamlit y
+# exportables como imagen estática para los reportes HTML/PDF
+plotly==6.7.0
+
+# --- Reportes imprimibles ----------------------------------
+# Jinja2: motor de plantillas — inyecta datos de Python en HTML/CSS.
+# El reporte se abre en el browser y se imprime como PDF (Ctrl+P).
+Jinja2==3.1.6
+
+# --- Utilidades --------------------------------------------
+# python-dateutil: manejo flexible de fechas, rangos y períodos
+python-dateutil==2.9.0.post0
