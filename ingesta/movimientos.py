@@ -6,7 +6,7 @@ Responsabilidades:
   2. Normalizar y validar los datos
   3. Detectar el período cubierto por el archivo
   4. Verificar duplicados contra periodos_ingesta
-  5. Insertar en DuckDB (movimientos + costo_sku_historial)
+  5. Insertar en DuckDB (movimientos)
   6. Registrar la ingesta en periodos_ingesta
 
 Uso desde Python:
@@ -185,36 +185,6 @@ def _verificar_duplicado(conn: duckdb.DuckDBPyConnection, periodo: str) -> bool:
     return result[0] > 0
 
 
-def _actualizar_costo_historial(
-    conn: duckdb.DuckDBPyConnection,
-    df: pd.DataFrame
-) -> int:
-    """
-    Extrae remitos RE/RI con costo > 0 y los inserta en costo_sku_historial.
-    Retorna cantidad de registros insertados.
-    """
-    remitos = df[
-        (df["tipomov"] == "REM") &
-        (df["tipo"].isin(["RE", "RI"])) &
-        (df["costo"].notna()) &
-        (df["costo"] > 0)
-    ][["codigo", "codigodepo", "fecha", "costo", "numero"]].copy()
-
-    if remitos.empty:
-        return 0
-
-    remitos = remitos.rename(columns={"numero": "numero_remito"})
-    remitos["fecha_ingesta"] = datetime.now(timezone.utc)
-
-    conn.execute("""
-        INSERT INTO costo_sku_historial (codigo, codigodepo, fecha, costo, numero_remito, fecha_ingesta)
-        SELECT codigo, codigodepo, fecha, costo, numero_remito, fecha_ingesta
-        FROM remitos
-    """)
-
-    return len(remitos)
-
-
 def _insertar_movimientos(
     conn: duckdb.DuckDBPyConnection,
     df: pd.DataFrame,
@@ -288,7 +258,7 @@ def ingestar_movimientos(
         forzar:    Si True, reemplaza el período aunque ya exista
 
     Returns:
-        dict con keys: periodo, registros, remitos_historial, advertencias
+        dict con keys: periodo, registros, sucursales, tipomov, advertencias
     """
     filepath = Path(filepath)
     archivo_origen = filepath.name
@@ -351,12 +321,7 @@ def ingestar_movimientos(
     registros = _insertar_movimientos(conn, df, periodo, archivo_origen)
     print(f"  ✓ {registros} registros insertados")
 
-    # 8. Actualizar costo_sku_historial
-    print("  Actualizando historial de costos (remitos RE/RI)...")
-    remitos_n = _actualizar_costo_historial(conn, df)
-    print(f"  ✓ {remitos_n} costos registrados en historial")
-
-    # 9. Registrar ingesta
+    # 8. Registrar ingesta
     _registrar_ingesta(conn, periodo, archivo_origen, registros)
     conn.close()
 
@@ -366,7 +331,6 @@ def ingestar_movimientos(
     return {
         "periodo": periodo,
         "registros": registros,
-        "remitos_historial": remitos_n,
         "sucursales": sucursales,
         "tipomov": tipomov_counts,
         "advertencias": advertencias,
