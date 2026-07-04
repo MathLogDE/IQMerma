@@ -110,6 +110,43 @@ deduplica por separado, y lee una hoja a la vez (liviano en memoria). Una
 pestaña que falle (mes ya cargado, u hoja que no es de datos) no corta las
 demás: se reporta al final.
 
+### Recargar / actualizar un mes (carga incremental)
+
+El dedupe es **por mes** (`YYYY-MM`). Recargar un mes que ya existe:
+
+- **sin `forzar`** → lo rechaza (no duplica, pero tampoco actualiza),
+- **con `forzar=True`** → **borra el mes completo y lo reinserta** desde el
+  archivo; la carga anterior queda como `reemplazado` en `periodos_ingesta`
+  (historial). Los demás meses no se tocan.
+
+> ⚠️ **Importante:** el archivo de recarga tiene que traer el **mes completo
+> hasta la fecha**, no solo los días nuevos. Como `forzar` reemplaza todo el
+> mes, si el export fuera solo el delta (los últimos días) perderías los
+> anteriores. La hora del corte no importa: el análisis filtra por la fecha
+> real de cada movimiento, así que siempre refleja lo último cargado.
+
+**Caso típico — un libro anual donde solo cambia el mes en curso.**
+Ej: `2026.xlsx` con pestañas `01-26` … `07-26`, y solo `07-26` se va agrandando.
+No recargues todo el libro (reprocesarías los meses estables): apuntá **solo a
+la pestaña del mes en curso** con `forzar=True`:
+
+```python
+from ingesta.movimientos import ingestar_movimientos, ingestar_libro_movimientos
+
+# Carga inicial (una vez): todo el libro
+ingestar_libro_movimientos("data/2026.xlsx", PROY)
+
+# Actualización recurrente: solo el mes en curso
+ingestar_movimientos("data/2026.xlsx", PROY, sheet="07-26", forzar=True)
+```
+
+Cuando arranque el mes siguiente, cambiás a `sheet="08-26"` (07-26 ya queda
+congelado y no se toca más).
+
+> En la UI, el checkbox "Archivo con varias pestañas" carga **todas** las hojas.
+> Para actualizar un solo mes desde la interfaz, o bien reprocesás todo el libro
+> con "forzar", o hacés esa actualización puntual desde Python con `sheet=`.
+
 ## 5. Verificar
 
 En la app, **Inicio** muestra los contadores (inventarios, movimientos, ventas,
