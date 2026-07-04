@@ -376,6 +376,13 @@ elif pagina == "Ingesta":
         if tipo_archivo == "stock":
             fecha_snapshot = st.date_input("Fecha del snapshot de stock")
 
+        multi_hoja = False
+        if tipo_archivo == "movimientos":
+            multi_hoja = st.checkbox(
+                "Archivo con varias pestañas (una por mes)", value=False,
+                help="Carga cada pestaña como su propio período.",
+            )
+
         forzar = st.checkbox("Reemplazar si ya existe (forzar)", value=False)
 
         if archivo and st.button("Ingestar"):
@@ -387,9 +394,22 @@ elif pagina == "Ingesta":
             try:
                 with st.spinner("Procesando..."):
                     if tipo_archivo == "movimientos":
-                        from ingesta.movimientos import ingestar_movimientos
-                        r = ingestar_movimientos(tmp_path, proyecto, forzar=forzar)
-                        st.success(f"✓ {r['registros']} movimientos cargados — período {r['periodo']}")
+                        if multi_hoja:
+                            from ingesta.movimientos import ingestar_libro_movimientos
+                            r = ingestar_libro_movimientos(tmp_path, proyecto, forzar=forzar)
+                            st.success(
+                                f"✓ {r['registros_total']} movimientos — "
+                                f"{r['cargadas']}/{r['hojas']} pestañas cargadas"
+                            )
+                            if r["errores"]:
+                                st.warning(
+                                    "Pestañas con error: "
+                                    + ", ".join(f"{e['hoja']} ({e['error']})" for e in r["errores"])
+                                )
+                        else:
+                            from ingesta.movimientos import ingestar_movimientos
+                            r = ingestar_movimientos(tmp_path, proyecto, forzar=forzar)
+                            st.success(f"✓ {r['registros']} movimientos cargados — período {r['periodo']}")
 
                     elif tipo_archivo == "ventas":
                         from ingesta.ventas import ingestar_ventas
