@@ -17,17 +17,25 @@ Analizador de merma de inventario para retail. Reemplaza el flujo Excel/Power Pi
 
 ```
 mermaiq/
-├── core/          # Lógica de negocio (sin dependencias de UI)
-├── ui/            # Streamlit
-├── ingesta/       # Carga de archivos del ERP
-├── projects/      # Un subdirectorio por cliente (excluido de git)
-├── templates/     # HTML/CSS para reportes imprimibles
-├── exports/       # Archivos generados (excluido de git)
-├── tests/
-├── config/
-├── setup_db.py    # Inicialización del schema
-└── requirements.txt
+├── core/
+│   └── merma.py        # Motor de cálculo de merma (sin dependencias de UI)
+├── ui/
+│   └── app.py          # Interfaz Streamlit
+├── ingesta/            # Carga de archivos del ERP
+│   ├── movimientos.py  #   movimientos + inventario físico (TIPOMOV='INV')
+│   ├── ventas.py       #   reporte de ventas
+│   ├── stock.py        #   snapshots de stock (valorización)
+│   └── referencias.py  #   depósitos, estructura, artículos
+├── projects/           # Un .duckdb por cliente (excluido de git)
+├── exports/            # Temporales de ingesta en runtime (excluido de git)
+├── setup_db.py         # Schema + catálogo tipos_categoria
+├── requirements.txt
+├── README.md
+├── GUIA_USO.md         # Guía de uso completa
+└── MIGRACION_V2.md     # Notas del refactor v2
 ```
+
+> Directorios reservados sin uso actual: `config/`, `templates/`, `tests/`.
 
 ## Setup inicial
 
