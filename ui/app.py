@@ -357,9 +357,9 @@ elif pagina == "Ingesta":
     with tab2:
         st.markdown("#### Cargar archivo manualmente")
         st.caption(
-            "El inventario físico se carga dentro de **movimientos** "
-            "(TIPOMOV='INV'). La carga de conteos como archivo aparte está "
-            "pendiente de migración a v2."
+            "El inventario físico entra dentro de **movimientos** "
+            "(TIPOMOV='INV'), en el mismo export del ERP — no se carga como "
+            "archivo aparte."
         )
 
         tipo_archivo = st.selectbox(

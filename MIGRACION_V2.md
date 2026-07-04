@@ -35,10 +35,12 @@ anclarse en un "evento de conteo".
 
 - [x] **Catálogo `tipo → categoría`**: definido y cargado (ver decisión 4).
       Mapeo por `tipo` solo (`tipomov` queda informativo).
-- [ ] ¿El export de `movimientos` ya trae filas `INV`, o el inventario siempre
-      viene en un archivo de conteo separado? (define si `conteos.py` se
-      reescribe o se elimina).
-- [ ] ¿De dónde sale `es_logistica`? (columna en archivo de depósitos vs. config manual).
+- [x] **INV en movimientos**: el inventario viene en el mismo export de
+      `movimientos` (TIPOMOV='INV'). No hay archivo de conteo aparte →
+      `conteos.py` se elimina.
+- [x] **`es_logistica`**: se marca **manualmente** con
+      `referencias.marcar_logistica(proyecto, codigos)`. Se preserva en las
+      recargas de `cargar_depositos`.
 
 ## Plan de remediación
 
@@ -66,16 +68,19 @@ anclarse en un "evento de conteo".
       `width="stretch"`. **Verificado con `streamlit.testing.AppTest`** (las 5
       páginas renderizan sin excepción; Análisis calcula correctamente).
 
-### Pendiente
-- [ ] **`conteos.py`** (requiere respuesta): reescribir para cargar INV en
-      `movimientos` (`diferencia = stock_real − stock_sistema`, `tipo='INV'`) **o**
-      eliminar si el INV ya viene en el export de movimientos. Revisar dedupe.
-- [ ] **`referencias.py`** (requiere respuesta): poblar `es_logistica` en
-      `cargar_depositos`. Ojo: hoy el `INSERT OR REPLACE` resetea la columna a FALSE
-      en cada recarga.
-- [ ] Para aplicar el catálogo nuevo a una DB ya existente: el seed solo corre
-      si `tipos_categoria` está vacía. En un proyecto ya creado, recargar con
-      `python setup_db.py --project <x> --reset` o re-sembrar la tabla a mano.
+- [x] **`conteos.py`**: eliminado. El INV entra por la ingesta de `movimientos`
+      (que carga cualquier `tipomov` genéricamente, sin cambios); el dedupe por
+      período mensual ya lo cubre.
+- [x] **`referencias.py`**: `cargar_depositos` ahora preserva `es_logistica` en
+      cada recarga; nuevo helper `marcar_logistica(proyecto, codigos)` para
+      marcar/desmarcar. Verificado con test.
+
+### Notas operativas
+- Para aplicar el catálogo `tipos_categoria` a una DB ya existente: el seed solo
+  corre si la tabla está vacía. En un proyecto ya creado, recargar con
+  `python setup_db.py --project <x> --reset` o re-sembrar la tabla a mano.
+- `es_logistica` se marca a mano una vez por proyecto (ej:
+  `marcar_logistica("cliente", ["CDC", "CR2"])`).
 
 ## Notas técnicas
 - `ventas.py` y `stock.py` ya están alineados con v2 — no requieren cambios.

@@ -6,8 +6,9 @@ Lógica común: upsert por clave.
   - Si no existe → insertar
   - Si ya no aparece en el archivo → no tocar (conservar histórico)
 
-Tres funciones públicas:
+Funciones públicas:
     cargar_depositos(filepath, proyecto)
+    marcar_logistica(proyecto, codigos, es_logistica=True)
     cargar_estructura(filepath, proyecto)
     cargar_articulos(filepath, proyecto)
 
@@ -108,10 +109,16 @@ def cargar_depositos(filepath: str | Path, proyecto: str) -> dict:
     conn = _get_connection(proyecto)
     n_antes = conn.execute("SELECT COUNT(*) FROM depositos").fetchone()[0]
 
+    # Preservar es_logistica: se marca manualmente (ver marcar_logistica) y el
+    # INSERT OR REPLACE la resetearía a FALSE en cada recarga del archivo.
+    existentes = conn.execute("SELECT codigodepo, es_logistica FROM depositos").df()
+    df = df.merge(existentes, on="codigodepo", how="left")
+    df["es_logistica"] = df["es_logistica"].fillna(False)
+
     conn.execute("""
         INSERT OR REPLACE INTO depositos
-            (codigodepo, nombre, direccion, abreviacion, fecha_ingesta)
-        SELECT codigodepo, nombre, direccion, abreviacion, fecha_ingesta
+            (codigodepo, nombre, direccion, abreviacion, es_logistica, fecha_ingesta)
+        SELECT codigodepo, nombre, direccion, abreviacion, es_logistica, fecha_ingesta
         FROM df
     """)
 
@@ -122,6 +129,53 @@ def cargar_depositos(filepath: str | Path, proyecto: str) -> dict:
     actualizados = len(df) - insertados
     _print_resumen(insertados, actualizados, 0, "depositos")
     return {"insertados": insertados, "actualizados": actualizados, "sin_cambios": 0}
+
+
+def marcar_logistica(
+    proyecto: str,
+    codigos: str | list[str],
+    es_logistica: bool = True,
+) -> dict:
+    """
+    Marca (o desmarca) manualmente depósitos como centros de logística.
+
+    El flag `es_logistica` distingue los centros de distribución (CDC, CR2)
+    de las sucursales de venta. Se preserva en las recargas de
+    `cargar_depositos`. El stock logístico se computa sumando los depósitos
+    marcados — nunca se hardcodea un código.
+
+    Args:
+        proyecto:     Nombre del proyecto
+        codigos:      codigodepo o lista de códigos (ej: "CDC" o ["CDC", "CR2"])
+        es_logistica: True para marcar como logística, False para desmarcar
+
+    Returns:
+        dict con keys: actualizados, no_encontrados
+    """
+    if isinstance(codigos, str):
+        codigos = [codigos]
+
+    conn = _get_connection(proyecto)
+    actualizados, no_encontrados = [], []
+    for c in codigos:
+        existe = conn.execute(
+            "SELECT COUNT(*) FROM depositos WHERE codigodepo = ?", [c]
+        ).fetchone()[0]
+        if existe:
+            conn.execute(
+                "UPDATE depositos SET es_logistica = ? WHERE codigodepo = ?",
+                [es_logistica, c],
+            )
+            actualizados.append(c)
+        else:
+            no_encontrados.append(c)
+    conn.close()
+
+    msg = f"  ✓ es_logistica={es_logistica}: {len(actualizados)} depósitos actualizados"
+    if no_encontrados:
+        msg += f", {len(no_encontrados)} no encontrados: {no_encontrados}"
+    print(msg)
+    return {"actualizados": actualizados, "no_encontrados": no_encontrados}
 
 
 # ---------------------------------------------------------------------------
