@@ -1,0 +1,280 @@
+# Guía de uso — MermaIQ
+
+Analizador de merma de inventario. Esta guía cubre todo el flujo: instalar,
+crear un proyecto, cargar datos, correr la app y leer los análisis.
+
+## Índice
+1. [Requisitos e instalación](#1-requisitos-e-instalación)
+2. [Crear un proyecto](#2-crear-un-proyecto)
+3. [Correr la app](#3-correr-la-app)
+4. [La interfaz de un vistazo](#4-la-interfaz-de-un-vistazo)
+5. [Cargar datos](#5-cargar-datos)
+6. [Analizar la merma](#6-analizar-la-merma)
+7. [Cómo se calcula la merma](#7-cómo-se-calcula-la-merma)
+8. [Mantenimiento](#8-mantenimiento)
+9. [Problemas comunes](#9-problemas-comunes)
+
+---
+
+## 1. Requisitos e instalación
+
+- Python 3.12
+- Dependencias:
+
+```bash
+pip install -r requirements.txt
+```
+
+Cada cliente es un proyecto independiente: un archivo
+`projects/<proyecto>/data.duckdb`. Borrar o recargar un proyecto no afecta a
+los demás.
+
+## 2. Crear un proyecto
+
+```bash
+python setup_db.py --project cliente_x
+```
+
+Crea el schema vacío y siembra el catálogo de tipos de movimiento por defecto
+(ver [sección 7](#7-cómo-se-calcula-la-merma)). Es idempotente: se puede
+correr de nuevo sin romper datos.
+
+## 3. Correr la app
+
+```bash
+streamlit run ui/app.py
+```
+
+Abre la interfaz en el navegador. En la **barra lateral** elegís el proyecto y
+navegás entre las páginas. Si todavía no hay proyectos, la app te avisa cómo
+crear uno.
+
+## 4. La interfaz de un vistazo
+
+**Barra lateral:** selector de **proyecto** + navegación entre 5 páginas.
+
+| Página | Para qué |
+|---|---|
+| **Inicio** | Métricas rápidas del proyecto y rango de fechas disponible. |
+| **Ingesta** | Ver qué períodos hay cargados y subir archivos nuevos. |
+| **Análisis** | Merma por SKU para una sucursal y un rango de fechas. |
+| **Sucursales** | Merma agregada, comparando todas las sucursales. |
+| **Rubros** | Pareto de merma por rubro (usa lo calculado en Análisis). |
+
+## 5. Cargar datos
+
+### Orden de carga (importante)
+
+1. **depositos** — primero. `stock` lo necesita para mapear las columnas de
+   sucursal por su *Abreviación*.
+2. **estructura** — rubros (para el análisis por Rubros).
+3. **articulos** — SKUs (descripción, rubro, activo).
+4. **stock** — snapshots (fuente de valorización: costo / lista_1).
+5. **movimientos** — incluye el inventario físico (TIPOMOV='INV').
+6. **ventas** — denominador del % de merma.
+7. **marcar logística** — marcar los centros de distribución (una vez).
+
+### Formato de cada archivo
+
+Los nombres de columna se normalizan (mayúsculas/espacios), pero deben estar:
+
+| Archivo | Columnas |
+|---|---|
+| depositos | `Cod. Dep.` · `Nombre` · `Dirección` · `Abreviación` |
+| estructura | `Rubro` · `Super Rubro` · `Gran Super Rubro` |
+| articulos | `Código` · `Descripción` · `Rubro` · `Marca` · `EAN` · `Clase` · `Activo` (mínimo: Código, Descripción, Activo) |
+| stock | `CODIGO` · `Lista 1` · `Costo` · `UxB` · + una columna por sucursal (encabezado = *Abreviación* del depósito) |
+| movimientos | `FECHA` · `TIPOMOV` · `TIPO` · `NUMERO` · `CODIGODEPO` · `NOMBRE` · `CODIGO` · `COSTO` · `INGRESO` · `EGRESO` · `DIFERENCIA` · `USER` · `TIPO AJ` (obligatorias: FECHA, TIPOMOV, TIPO, NUMERO, CODIGODEPO, CODIGO) |
+| ventas | `FECHA DESDE` · `FECHA HASTA` · `CÓDIGO` · `COD. DEP.` · `TOTAL VTA.` · `TOTAL UNID.` |
+
+Notas:
+- Números en formato argentino (coma decimal) se parsean solos.
+- `movimientos`: la `DIFERENCIA` se **recalcula** como `INGRESO - EGRESO`.
+- `stock`: las columnas que no matcheen una abreviación de depósito se ignoran
+  (se reportan como advertencia).
+
+### Opción A — desde la interfaz
+
+En **Ingesta → 📁 Cargar archivo**: elegís el tipo, subís el Excel y apretás
+*Ingestar*, respetando el orden de arriba. Para `stock` te pide la *fecha del
+snapshot*. La pestaña **📋 Períodos cargados** muestra todo lo ya ingestado.
+
+### Opción B — script Python (más rápido para carga masiva)
+
+```python
+# cargar_todo.py
+from ingesta.referencias import cargar_depositos, cargar_estructura, cargar_articulos, marcar_logistica
+from ingesta.stock import ingestar_stock
+from ingesta.movimientos import ingestar_movimientos, ingestar_libro_movimientos
+from ingesta.ventas import ingestar_ventas
+
+PROY = "cliente_x"
+
+cargar_depositos("data/depositos.xlsx", PROY)
+cargar_estructura("data/estructura.xlsx", PROY)
+cargar_articulos("data/articulos.xlsx", PROY)
+
+ingestar_stock("data/stock_2026-03-31.xlsx", PROY, fecha_snapshot="2026-03-31")
+
+# Movimientos: un archivo con varias pestañas (una por mes) → una sola llamada
+ingestar_libro_movimientos("data/2026.xlsx", PROY)
+
+ingestar_ventas("data/ventas_2026-01.xlsx", PROY)
+ingestar_ventas("data/ventas_2026-02.xlsx", PROY)
+
+# Marcar centros de distribución (una vez)
+marcar_logistica(PROY, ["CDC", "CR2"])
+```
+
+### Movimientos con varias pestañas (un Excel por año)
+
+Si tu archivo tiene una pestaña por mes (`01-26`, `02-26`, …), usá
+`ingestar_libro_movimientos` (o, en la UI, marcá **"Archivo con varias
+pestañas"**). Hace **una ingesta por pestaña**: cada mes se detecta y deduplica
+por separado, y lee una hoja a la vez (liviano en memoria). Una pestaña que
+falle (mes ya cargado, u hoja que no es de datos) no corta las demás.
+
+### Recargar / actualizar un mes (carga incremental)
+
+El dedupe es **por mes** (`YYYY-MM`). Recargar un mes que ya existe:
+
+- **sin `forzar`** → lo rechaza (no duplica, pero tampoco actualiza),
+- **con `forzar=True`** → **borra el mes completo y lo reinserta**; la carga
+  anterior queda como `reemplazado` en `periodos_ingesta`. Los demás meses no
+  se tocan.
+
+> ⚠️ El archivo de recarga debe traer el **mes completo hasta la fecha**, no
+> solo los días nuevos. La hora del corte no importa: el análisis filtra por la
+> fecha real de cada movimiento.
+
+**Caso típico — un libro anual donde solo cambia el mes en curso**
+(`2026.xlsx`, y solo `07-26` crece). No recargues todo el libro; apuntá solo a
+esa pestaña:
+
+```python
+from ingesta.movimientos import ingestar_movimientos, ingestar_libro_movimientos
+
+ingestar_libro_movimientos("data/2026.xlsx", PROY)          # carga inicial (una vez)
+ingestar_movimientos("data/2026.xlsx", PROY, sheet="07-26", forzar=True)  # actualización
+```
+
+Al arrancar el mes siguiente, cambiás a `sheet="08-26"`.
+
+> En la UI el checkbox "varias pestañas" carga **todas** las hojas. Para
+> actualizar un solo mes, o reprocesás todo el libro con "forzar", o hacés esa
+> actualización puntual desde Python con `sheet=`.
+
+## 6. Analizar la merma
+
+### Página Análisis
+
+1. Elegí la **sucursal**.
+2. Elegí el **rango de fechas** (Desde / Hasta) — por defecto abarca todos los
+   datos disponibles.
+3. Elegí la **valorización**: *A costo* o *A precio de lista* (ver
+   [sección 7](#7-cómo-se-calcula-la-merma)).
+4. (Opcional) En **Opciones avanzadas**, el *criterio de asignación de ventas*
+   (ver más abajo).
+5. Apretá **Calcular merma**.
+
+**Qué ves:**
+- **Métricas arriba:** SKUs analizados, merma total valorizada, venta total del
+  período y **% de merma sobre ventas**.
+- **Detalle por SKU:** una fila por SKU, con una columna `$` por cada
+  **categoría de movimiento** (Ventas, Inventario, Dif. de camión, Ajustes,
+  Remitido…), más la merma total, la venta y el % del SKU. Los valores de
+  categoría son **netos con signo** (positivo = entró stock, negativo = salió).
+- **Top 15 SKUs por merma:** gráfico de barras apiladas por las categorías que
+  cuentan como merma.
+
+> El **universo de SKUs** son los que tuvieron algún movimiento o venta en el
+> rango. Un SKU con solo ventas aparece con merma 0 (suma al denominador).
+
+**Criterio de asignación de ventas** (cómo se cuentan los períodos de venta que
+cruzan el borde del rango elegido):
+- **contenido** — solo períodos de venta completamente dentro del rango.
+- **solapado** — cualquier período que toque el rango, sumado completo.
+- **prorrateado** — períodos solapados, ponderados por los días que caen dentro
+  del rango (recomendado si las ventas vienen por quincena/mes).
+
+### Página Sucursales
+
+Mismo rango y valorización, pero calcula **todas las sucursales** y las compara:
+métricas globales, una tabla con la merma por categoría de cada sucursal, y un
+gráfico comparativo. Útil para detectar qué locales concentran la merma.
+
+### Página Rubros
+
+Pareto de merma por **rubro** (o super rubro / gran super rubro). Usa lo que
+calculaste en **Análisis**, así que primero corré esa página. Muestra las barras
+de merma por rubro ordenadas y la curva de **% acumulado** (regla 80/20).
+
+## 7. Cómo se calcula la merma
+
+**Merma = pérdida no explicada.** Por SKU y por categoría se suma la
+`diferencia` (neta) de los movimientos del rango, y se valoriza contra el
+**stock** (snapshot más reciente ≤ fecha hasta).
+
+- **Categorías de merma** (suman al numerador): **Inventario (INV)**,
+  **Dif. de camión (MD)** y **Ajustes (CS)** — solo su **parte negativa**
+  (faltante).
+- **No son merma** (informativas): **Ventas** (FA/FB/NCA/NCB/FCA/NCCA) y
+  **Remitido** (RE/RI/RDC) — son flujos legítimos.
+- **Valorización:**
+  - *A costo* → unidades × `costo` del stock. La venta también se revaloriza
+    como `unidades_vendidas × costo`.
+  - *A precio de lista* → unidades × `lista_1` del stock. La venta usa el
+    importe real `venta_neta` del archivo de ventas.
+- **% merma = merma total valorizada / venta del período × 100.**
+
+El mapeo `tipo → categoría` y qué suma a merma viven en la tabla
+`tipos_categoria`, **editable sin tocar código** (ver
+[sección 8](#8-mantenimiento)). Un subtipo que no esté en el catálogo cae en la
+columna **"(sin categoría)"** y no suma a la merma (para que nada se pierda en
+silencio).
+
+## 8. Mantenimiento
+
+### Empezar de cero (borrar datos)
+
+```bash
+python setup_db.py --project cliente_x --reset   # confirmás con "s"
+```
+
+Borra y recrea todas las tablas y **resetea el catálogo `tipos_categoria`** a
+los valores por defecto (si lo habías editado, se pierde).
+
+### Marcar centros de logística
+
+El flag `es_logistica` distingue los centros de distribución (CDC, CR2) de las
+sucursales de venta. Se marca a mano una vez y **se preserva** en las recargas
+de depósitos:
+
+```python
+from ingesta.referencias import marcar_logistica
+marcar_logistica("cliente_x", ["CDC", "CR2"])          # marcar
+marcar_logistica("cliente_x", "CDC", es_logistica=False)  # desmarcar
+```
+
+### Editar el catálogo de tipos
+
+```python
+import duckdb
+conn = duckdb.connect("projects/cliente_x/data.duckdb")
+print(conn.execute("SELECT * FROM tipos_categoria ORDER BY orden, tipo").df())
+# agregar/ajustar un subtipo (tipo, tipomov, categoria, es_merma, orden, fecha)
+conn.execute("INSERT OR REPLACE INTO tipos_categoria VALUES ('XX','REM','Remitido',FALSE,5,now())")
+conn.close()
+```
+
+## 9. Problemas comunes
+
+| Síntoma | Causa / solución |
+|---|---|
+| "La sucursal no existe en depositos" al cargar stock | Cargá **depositos** antes que stock. |
+| Columnas de stock ignoradas | El encabezado no matchea ninguna *Abreviación* de depósito. Revisá la columna `Abreviación`. |
+| "El período ya fue cargado" | El mes ya existe. Usá `forzar=True` (o el checkbox "forzar") para reemplazarlo. |
+| Un SKU sin `% Merma` | No tiene ventas en el rango (denominador 0). |
+| Columna **"(sin categoría)"** con valores | Hay subtipos de movimiento que no están en `tipos_categoria`. Agregalos al catálogo. |
+| Merma valorizada en 0 pese a haber faltantes | El SKU no tiene snapshot de stock ≤ fecha hasta → no se puede valorizar. Cargá un stock que cubra el período. |
+| La página Rubros dice "Calculá primero el análisis" | Corré **Análisis** antes; Rubros reutiliza ese resultado. |

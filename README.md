@@ -37,7 +37,16 @@ pip install -r requirements.txt
 
 # Crear schema para un proyecto nuevo
 python setup_db.py --project nombre_cliente
+
+# Correr la app
+streamlit run ui/app.py
 ```
+
+## Guía de uso
+
+Instalación, carga de datos y lectura de los análisis, paso a paso, en
+**[GUIA_USO.md](GUIA_USO.md)**. Detalle del refactor v2 en
+[MIGRACION_V2.md](MIGRACION_V2.md).
 
 ## Fórmula central
 
@@ -46,5 +55,8 @@ merma real (%) = merma valorizada / ventas del período
 ```
 
 Donde:
-- **merma valorizada** = unidades faltantes × costo unitario (del conteo o del historial de remitos)
-- **ventas del período** = venta neta con descuentos, del reporte de cierre
+- **merma valorizada** = suma de faltantes de las categorías de merma
+  (Inventario, Dif. de camión, Ajustes), valorizados contra el stock (costo o
+  precio de lista).
+- **ventas del período** = venta del archivo de ventas (a costo o a precio de
+  lista según el modo elegido).
