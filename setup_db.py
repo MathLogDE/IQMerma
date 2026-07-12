@@ -254,6 +254,41 @@ DEFAULT_TIPOS_CATEGORIA = [
 ]
 
 
+def _migrar(conn: duckdb.DuckDBPyConnection) -> None:
+    """
+    Lleva una DB preexistente al schema actual sin perder datos.
+    Agrega columnas nuevas que `CREATE TABLE IF NOT EXISTS` no toca en tablas
+    que ya existían. Idempotente.
+    """
+    def columnas(tabla: str) -> set[str]:
+        return {r[1] for r in conn.execute(f"PRAGMA table_info('{tabla}')").fetchall()}
+
+    # estructura: rubro_cod (código de rubro)
+    if "estructura" in _tablas(conn) and "rubro_cod" not in columnas("estructura"):
+        conn.execute("ALTER TABLE estructura ADD COLUMN rubro_cod VARCHAR")
+        print("  [migración] estructura += rubro_cod")
+
+    # tipos_categoria: es_venta (denominador)
+    if "tipos_categoria" in _tablas(conn) and "es_venta" not in columnas("tipos_categoria"):
+        conn.execute("ALTER TABLE tipos_categoria ADD COLUMN es_venta BOOLEAN DEFAULT FALSE")
+        ventas_tipos = [t for (t, _tm, _c, _em, ev, _o) in DEFAULT_TIPOS_CATEGORIA if ev]
+        if ventas_tipos:
+            marcadores = ", ".join("?" * len(ventas_tipos))
+            conn.execute(
+                f"UPDATE tipos_categoria SET es_venta = TRUE WHERE tipo IN ({marcadores})",
+                ventas_tipos,
+            )
+        print("  [migración] tipos_categoria += es_venta")
+
+
+def _tablas(conn: duckdb.DuckDBPyConnection) -> set[str]:
+    return {
+        r[0] for r in conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        ).fetchall()
+    }
+
+
 def _sembrar_tipos_categoria(conn: duckdb.DuckDBPyConnection) -> None:
     """Inserta el catálogo por defecto solo si la tabla está vacía (idempotente)."""
     n = conn.execute("SELECT COUNT(*) FROM tipos_categoria").fetchone()[0]
@@ -300,6 +335,7 @@ def setup(project_name: str, reset: bool = False) -> None:
 
     print(f"  Creando schema en: {db_path}")
     conn.execute(SCHEMA_SQL)
+    _migrar(conn)
     _sembrar_tipos_categoria(conn)
 
     tablas = [
