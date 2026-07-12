@@ -176,22 +176,29 @@ Al arrancar el mes siguiente, cambiás a `sheet="08-26"`.
 
 ### Página Análisis
 
-1. Elegí la **sucursal**.
+1. Elegí la **sucursal** (o **⊕ Todas las sucursales**).
 2. Elegí el **rango de fechas** (Desde / Hasta) — por defecto abarca todos los
    datos disponibles.
 3. Elegí la **valorización**: *A costo* o *A precio de lista* (ver
    [sección 7](#7-cómo-se-calcula-la-merma)).
-4. Apretá **Calcular merma**.
+4. Elegí **Valorizar al (snapshot)**: la fecha del stock con la que se valoriza
+   (entre los snapshots cargados; default el más reciente).
+5. Apretá **Calcular merma**.
+
+**Filtros** (se aplican al resultado, sin recalcular): Gran Super Rubro,
+Rubro, Marca y búsqueda por código/descripción. Los KPIs y gráficos se
+actualizan con el filtro.
 
 **Qué ves:**
-- **Métricas arriba:** SKUs analizados, merma total valorizada, venta total del
-  período y **% de merma sobre ventas**.
-- **Detalle por SKU:** una fila por SKU, con una columna `$` por cada
-  **categoría de movimiento** (Ventas, Inventario, Dif. de camión, Ajustes,
-  Remitido…), más la merma total, la venta y el % del SKU. Los valores de
-  categoría son **netos con signo** (positivo = entró stock, negativo = salió).
-- **Top 15 SKUs por merma:** gráfico de barras apiladas por las categorías que
-  cuentan como merma.
+- **KPIs:** SKUs analizados, SKUs con merma, merma total ($ y unidades), venta
+  total y **% de merma sobre ventas**.
+- **Detalle por SKU:** una fila por SKU con rubro, una columna por **categoría
+  de movimiento** (Ventas, Inventario, Dif. de camión, Ajustes, Remitido…) y el
+  selector **Mostrar: Valorizado / Unidades / Ambos** para ver importes,
+  cantidades o los dos. Los valores son **netos con signo** (positivo = entró
+  stock, negativo = salió).
+- **Dashboard:** composición de la merma por categoría (dona), top 15 SKUs por
+  merma (barras apiladas) y merma vs % de merma por gran super rubro.
 
 > El **universo de SKUs** son los que tuvieron algún movimiento en el rango.
 
