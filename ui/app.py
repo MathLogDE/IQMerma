@@ -646,12 +646,29 @@ elif pagina == "Rubros":
         conn = get_connection(proyecto)
         arts = conn.execute("SELECT codigo, rubro FROM articulos").df()
         est = conn.execute(
-            "SELECT rubro, super_rubro, gran_super_rubro FROM estructura"
+            "SELECT rubro_cod, rubro, super_rubro, gran_super_rubro FROM estructura"
         ).df()
         conn.close()
 
+        # Lookup por código O por nombre: articulos.rubro puede traer cualquiera
+        registros = []
+        for _, r in est.iterrows():
+            for clave in (r["rubro_cod"], r["rubro"]):
+                if pd.notna(clave):
+                    registros.append({
+                        "_clave": str(clave).strip(),
+                        "rubro_desc": r["rubro"],
+                        "super_rubro": r["super_rubro"],
+                        "gran_super_rubro": r["gran_super_rubro"],
+                    })
+        mapa = (pd.DataFrame(registros).drop_duplicates("_clave") if registros
+                else pd.DataFrame(columns=["_clave", "rubro_desc", "super_rubro", "gran_super_rubro"]))
+
         df = df.merge(arts, on="codigo", how="left")
-        df = df.merge(est, on="rubro", how="left")
+        df["_clave"] = df["rubro"].astype("string").str.strip()
+        df = df.merge(mapa, on="_clave", how="left")
+        # Mostrar el nombre de rubro; si no matcheó, cae al valor crudo
+        df["rubro"] = df["rubro_desc"].fillna(df["rubro"])
 
         nivel = st.selectbox(
             "Nivel de agrupación",

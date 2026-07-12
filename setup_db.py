@@ -170,15 +170,19 @@ CREATE TABLE IF NOT EXISTS depositos (
 
 -- ============================================================
 -- ESTRUCTURA
--- Catálogo de rubros con jerarquía. Upsert por rubro.
--- Join: articulos.rubro -> estructura.rubro -> jerarquía completa.
+-- Catálogo de rubros con jerarquía. Upsert por código de rubro (CR).
+-- Guarda el código y la descripción de cada nivel, para que el join con
+-- articulos.rubro funcione tanto si trae el código como el nombre.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS estructura (
-    rubro            VARCHAR PRIMARY KEY,
-    super_rubro      VARCHAR,
-    gran_super_rubro VARCHAR,
+    rubro_cod        VARCHAR PRIMARY KEY,   -- código de rubro (CR del ERP)
+    rubro            VARCHAR,               -- descripción de rubro (join por nombre)
+    super_rubro      VARCHAR,               -- descripción super rubro
+    gran_super_rubro VARCHAR,               -- descripción gran super rubro
     fecha_ingesta    TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_estructura_rubro ON estructura (rubro);
 
 
 -- ============================================================

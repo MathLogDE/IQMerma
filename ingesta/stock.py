@@ -43,14 +43,20 @@ from datetime import datetime, timezone
 # El ERP puede variar mayúsculas/minúsculas y espacios — se normalizan.
 # ---------------------------------------------------------------------------
 
-COLUMNAS_FIJAS = {"CODIGO", "LISTA 1", "COSTO", "UXB"}
+COLUMNAS_FIJAS = {"CODIGO", "CÓDIGO", "LISTA 1", "COSTO", "UXB", "CANT X BULTO"}
 
 RENAME_FIJAS = {
-    "CODIGO":  "codigo",
-    "LISTA 1": "lista_1",
-    "COSTO":   "costo",
-    "UXB":     "uxb",
+    "CODIGO":       "codigo",
+    "CÓDIGO":       "codigo",
+    "LISTA 1":      "lista_1",
+    "COSTO":        "costo",
+    "UXB":          "uxb",
+    "CANT X BULTO": "uxb",
 }
+
+# Columnas derivadas/agregadas del ERP que NO son sucursales — se ignoran.
+# LOG = CDC + CR2 (stock logístico ya derivado); no debe cargarse como depósito.
+COLUMNAS_EXCLUIDAS = {"LOG"}
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +123,7 @@ def _detectar_columnas(
     no_mapeadas = []
 
     for col in columnas:
-        if col in COLUMNAS_FIJAS:
+        if col in COLUMNAS_FIJAS or col in COLUMNAS_EXCLUIDAS:
             continue
         if col in mapa_abrev:
             sucursales_mapeadas.append(col)
@@ -277,7 +283,7 @@ def ingestar_stock(
     df_crudo = _leer_excel(filepath)
     print(f"  Filas leídas: {len(df_crudo)}, columnas: {len(df_crudo.columns)}")
 
-    if "CODIGO" not in df_crudo.columns:
+    if "CODIGO" not in df_crudo.columns and "CÓDIGO" not in df_crudo.columns:
         raise ValueError(
             "Columna 'CODIGO' no encontrada. "
             f"Columnas presentes: {list(df_crudo.columns)}"

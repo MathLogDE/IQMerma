@@ -78,20 +78,30 @@ crear uno.
 
 Los nombres de columna se normalizan (mayúsculas/espacios), pero deben estar:
 
+Columnas según el export del ERP (validadas contra archivos reales):
+
 | Archivo | Columnas |
 |---|---|
-| depositos | `Cod. Dep.` · `Nombre` · `Dirección` · `Abreviación` |
-| estructura | `Rubro` · `Super Rubro` · `Gran Super Rubro` |
-| articulos | `Código` · `Descripción` · `Rubro` · `Marca` · `EAN` · `Clase` · `Activo` (mínimo: Código, Descripción, Activo) |
-| stock | `CODIGO` · `Lista 1` · `Costo` · `UxB` · + una columna por sucursal (encabezado = *Abreviación* del depósito) |
+| depositos | `CD` · `Nombre Deposito` · `Abreviatura Deposito` · `Ubicación` (obligatorias: CD, Nombre Deposito, Abreviatura Deposito) |
+| estructura | `CR` · `Descripción Rubro` · `Super Rubro:` · `Grupo Super Rubro:` (+ códigos `CGSR`/`CSR`, que se conservan) — obligatorias: CR, Descripción Rubro |
+| articulos | `Código` · `Descripción` · `Rubro` · `Marca` · `EAN` · `Clase` · `Activo?` (mínimo: Código, Descripción, Activo?) |
+| stock | `Código` · `Costo` · `Lista 1` · `Cant X Bulto` · + una columna por sucursal (encabezado = *Abreviatura* del depósito) |
 | movimientos | `FECHA` · `TIPOMOV` · `TIPO` · `NUMERO` · `CODIGODEPO` · `NOMBRE` · `CODIGO` · `COSTO` · `INGRESO` · `EGRESO` · `DIFERENCIA` · `USER` · `TIPO AJ` (obligatorias: FECHA, TIPOMOV, TIPO, NUMERO, CODIGODEPO, CODIGO) |
 | ventas | `FECHA DESDE` · `FECHA HASTA` · `CÓDIGO` · `COD. DEP.` · `TOTAL VTA.` · `TOTAL UNID.` |
 
 Notas:
 - Números en formato argentino (coma decimal) se parsean solos.
-- `movimientos`: la `DIFERENCIA` se **recalcula** como `INGRESO - EGRESO`.
-- `stock`: las columnas que no matcheen una abreviación de depósito se ignoran
-  (se reportan como advertencia).
+- **Códigos de SKU con ceros a la izquierda** (`0418886`): el Excel debe tenerlos
+  como **texto**, no como número, o se pierden y no matchean entre archivos.
+- `movimientos`: la `DIFERENCIA` se **recalcula** como `INGRESO - EGRESO`
+  (tolera ingreso/egreso negativos, como en NCCA/RDC).
+- `stock`: la columna derivada `LOG` (= CDC + CR2) se **ignora**; las demás
+  columnas que no matcheen una abreviatura de depósito se reportan como
+  advertencia. El stock logístico se computa sumando los depósitos marcados
+  `es_logistica` (ver [sección 8](#8-mantenimiento)).
+- `estructura`: se guarda el **código** de rubro (CR) y las **descripciones**;
+  el join con artículos funciona tanto si `articulos.Rubro` trae el código como
+  el nombre.
 
 ### Opción A — desde la interfaz
 

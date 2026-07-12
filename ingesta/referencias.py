@@ -75,12 +75,14 @@ def _print_resumen(insertados: int, actualizados: int, sin_cambios: int, tabla: 
 # depositos
 # ---------------------------------------------------------------------------
 
-DEPOSITOS_COLS = {"COD. DEP.", "NOMBRE", "DIRECCIÓN", "ABREVIACIÓN"}
+# Obligatorias (nombres reales del ERP, normalizados a upper)
+DEPOSITOS_COLS = {"CD", "NOMBRE DEPOSITO", "ABREVIATURA DEPOSITO"}
 DEPOSITOS_RENAME = {
-    "COD. DEP.":   "codigodepo",
-    "NOMBRE":      "nombre",
-    "DIRECCIÓN":   "direccion",
-    "ABREVIACIÓN": "abreviacion",
+    "CD":                   "codigodepo",
+    "NOMBRE DEPOSITO":      "nombre",
+    "ABREVIATURA DEPOSITO": "abreviacion",
+    "UBICACIÓN":            "direccion",
+    "UBICACION":            "direccion",   # por si viene sin tilde
 }
 
 
@@ -100,6 +102,10 @@ def cargar_depositos(filepath: str | Path, proyecto: str) -> dict:
     df = df[[c for c in DEPOSITOS_RENAME if c in df.columns]].copy()
     df = df.rename(columns=DEPOSITOS_RENAME)
     df = df.dropna(subset=["codigodepo"])
+    # Asegurar columnas opcionales (ej: direccion si no vino Ubicación)
+    for col in ["nombre", "direccion", "abreviacion"]:
+        if col not in df.columns:
+            df[col] = None
     for col in df.columns:
         df[col] = df[col].str.strip().replace("nan", None)
 
@@ -182,19 +188,26 @@ def marcar_logistica(
 # estructura
 # ---------------------------------------------------------------------------
 
-ESTRUCTURA_COLS = {"RUBRO", "SUPER RUBRO", "GRAN SUPER RUBRO"}
+# Jerarquía real del ERP: códigos (CGSR/CSR/CR) + descripciones. Se guarda el
+# código de rubro (CR) como clave y las descripciones de cada nivel. Los
+# encabezados vienen con ":" y variaciones de tilde — se contemplan variantes.
 ESTRUCTURA_RENAME = {
-    "RUBRO":            "rubro",
-    "SUPER RUBRO":      "super_rubro",
-    "GRAN SUPER RUBRO": "gran_super_rubro",
+    "CR":                  "rubro_cod",
+    "DESCRIPCIÓN RUBRO":   "rubro",
+    "DESCRIPCION RUBRO":   "rubro",
+    "SUPER RUBRO:":        "super_rubro",
+    "SUPER RUBRO":         "super_rubro",
+    "GRUPO SUPER RUBRO:":  "gran_super_rubro",
+    "GRUPO SUPER RUBRO":   "gran_super_rubro",
 }
 
 
 def cargar_estructura(filepath: str | Path, proyecto: str) -> dict:
     """
     Upsert de estructura de rubros.
-    PK: rubro. Una fila por rubro — no por SKU.
-    Join posterior: articulos.rubro → estructura.rubro
+    PK: rubro_cod (código de rubro CR). Una fila por rubro.
+    Guarda código + descripciones para que el join con articulos funcione
+    tanto por código como por nombre.
     """
     filepath = Path(filepath)
     print(f"\n{'='*55}")
@@ -203,15 +216,27 @@ def cargar_estructura(filepath: str | Path, proyecto: str) -> dict:
 
     df = _leer_excel(filepath)
 
-    faltantes = sorted(ESTRUCTURA_COLS - set(df.columns))
-    if faltantes:
-        raise ValueError(f"Columnas faltantes en estructura: {faltantes}")
-
+    # Seleccionar y renombrar; validar contra los nombres ya normalizados
     df = df[[c for c in ESTRUCTURA_RENAME if c in df.columns]].copy()
     df = df.rename(columns=ESTRUCTURA_RENAME)
-    df = df.dropna(subset=["rubro"])
-    for col in df.columns:
+    # Si un nivel apareció con dos variantes de nombre, quedarse con una
+    df = df.loc[:, ~df.columns.duplicated()]
+
+    faltan = {"rubro_cod", "rubro"} - set(df.columns)
+    if faltan:
+        raise ValueError(
+            "Columnas faltantes en estructura (esperaba 'CR' y 'Descripción Rubro'): "
+            f"{sorted(faltan)}"
+        )
+
+    for col in ["super_rubro", "gran_super_rubro"]:
+        if col not in df.columns:
+            df[col] = None
+
+    df = df.dropna(subset=["rubro_cod"])
+    for col in ["rubro_cod", "rubro", "super_rubro", "gran_super_rubro"]:
         df[col] = df[col].str.strip().replace("nan", None)
+    df = df.drop_duplicates(subset=["rubro_cod"])
 
     now = datetime.now(timezone.utc)
     df["fecha_ingesta"] = now
@@ -221,8 +246,8 @@ def cargar_estructura(filepath: str | Path, proyecto: str) -> dict:
 
     conn.execute("""
         INSERT OR REPLACE INTO estructura
-            (rubro, super_rubro, gran_super_rubro, fecha_ingesta)
-        SELECT rubro, super_rubro, gran_super_rubro, fecha_ingesta
+            (rubro_cod, rubro, super_rubro, gran_super_rubro, fecha_ingesta)
+        SELECT rubro_cod, rubro, super_rubro, gran_super_rubro, fecha_ingesta
         FROM df
     """)
 
@@ -268,6 +293,8 @@ def cargar_articulos(filepath: str | Path, proyecto: str) -> dict:
 
     print("  Leyendo archivo...")
     df = _leer_excel(filepath)
+    # El ERP exporta el header como "Activo?" — quitar el signo de pregunta
+    df.columns = [c[:-1].strip() if c.endswith("?") else c for c in df.columns]
     print(f"  Filas leídas: {len(df)}")
 
     faltantes = sorted(ARTICULOS_COLS - set(df.columns))
