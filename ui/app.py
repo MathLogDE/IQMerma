@@ -143,36 +143,25 @@ def listar_proyectos() -> list[str]:
 
 
 def listar_sucursales(proyecto: str) -> pd.DataFrame:
-    """Sucursales con datos (movimientos o ventas), con nombre si existe."""
+    """Sucursales con movimientos, con nombre si existe."""
     conn = get_connection(proyecto)
     df = conn.execute("""
-        WITH deps AS (
-            SELECT DISTINCT codigodepo FROM movimientos
-            UNION
-            SELECT DISTINCT codigodepo FROM ventas
-        )
-        SELECT x.codigodepo, d.nombre
-        FROM deps x
-        LEFT JOIN depositos d ON x.codigodepo = d.codigodepo
-        WHERE x.codigodepo IS NOT NULL
-        ORDER BY x.codigodepo
+        SELECT DISTINCT m.codigodepo, d.nombre
+        FROM movimientos m
+        LEFT JOIN depositos d ON m.codigodepo = d.codigodepo
+        WHERE m.codigodepo IS NOT NULL
+        ORDER BY m.codigodepo
     """).df()
     conn.close()
     return df
 
 
 def rango_disponible(proyecto: str) -> tuple[date | None, date | None]:
-    """Rango de fechas con datos (movimientos + ventas)."""
+    """Rango de fechas con movimientos."""
     conn = get_connection(proyecto)
     rm = conn.execute("SELECT MIN(fecha), MAX(fecha) FROM movimientos").fetchone()
-    rv = conn.execute("SELECT MIN(fecha_desde), MAX(fecha_hasta) FROM ventas").fetchone()
     conn.close()
-
-    mins = [d for d in (rm[0], rv[0]) if d is not None]
-    maxs = [d for d in (rm[1], rv[1]) if d is not None]
-    fmin = min(mins) if mins else None
-    fmax = max(maxs) if maxs else None
-    return fmin, fmax
+    return rm[0], rm[1]
 
 
 def categorias_merma(proyecto: str) -> list[str]:
@@ -258,10 +247,10 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 
 def controles_periodo(proyecto: str, key_prefix: str):
-    """Renderiza fecha_desde, fecha_hasta, modo_valorizacion y criterio_ventas."""
+    """Renderiza fecha_desde, fecha_hasta y modo_valorizacion."""
     fmin, fmax = rango_disponible(proyecto)
     if fmin is None:
-        st.info("No hay movimientos ni ventas cargados todavía.")
+        st.info("No hay movimientos cargados todavía.")
         return None
 
     c1, c2, c3 = st.columns(3)
@@ -282,18 +271,10 @@ def controles_periodo(proyecto: str, key_prefix: str):
             key=f"{key_prefix}_modo",
         )
 
-    with st.expander("Opciones avanzadas"):
-        criterio = st.selectbox(
-            "Criterio de asignación de ventas",
-            ["contenido", "solapado", "prorrateado"],
-            key=f"{key_prefix}_criterio",
-        )
-
     return {
         "fecha_desde": str(fecha_desde),
         "fecha_hasta": str(fecha_hasta),
         "modo_valorizacion": modo_val,
-        "criterio_ventas": criterio,
     }
 
 
@@ -309,17 +290,15 @@ if pagina == "Inicio":
         "SELECT COUNT(DISTINCT fecha || '|' || codigodepo) FROM movimientos WHERE tipomov = 'INV'"
     ).fetchone()[0]
     n_movimientos = conn.execute("SELECT COUNT(*) FROM movimientos").fetchone()[0]
-    n_ventas = conn.execute("SELECT COUNT(*) FROM ventas").fetchone()[0]
     n_skus = conn.execute("SELECT COUNT(DISTINCT codigo) FROM articulos WHERE activo = true").fetchone()[0]
     n_sucursales = conn.execute("SELECT COUNT(*) FROM depositos").fetchone()[0]
     conn.close()
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Inventarios cargados", n_inv)
     col2.metric("Movimientos", f"{n_movimientos:,}")
-    col3.metric("Registros de ventas", f"{n_ventas:,}")
-    col4.metric("SKUs activos", f"{n_skus:,}")
-    col5.metric("Sucursales", n_sucursales)
+    col3.metric("SKUs activos", f"{n_skus:,}")
+    col4.metric("Sucursales", n_sucursales)
 
     fmin, fmax = rango_disponible(proyecto)
     if fmin:
@@ -364,7 +343,7 @@ elif pagina == "Ingesta":
 
         tipo_archivo = st.selectbox(
             "Tipo de archivo",
-            ["movimientos", "ventas", "stock", "depositos", "estructura", "articulos"]
+            ["movimientos", "stock", "depositos", "estructura", "articulos"]
         )
 
         archivo = st.file_uploader(
@@ -410,11 +389,6 @@ elif pagina == "Ingesta":
                             from ingesta.movimientos import ingestar_movimientos
                             r = ingestar_movimientos(tmp_path, proyecto, forzar=forzar)
                             st.success(f"✓ {r['registros']} movimientos cargados — período {r['periodo']}")
-
-                    elif tipo_archivo == "ventas":
-                        from ingesta.ventas import ingestar_ventas
-                        r = ingestar_ventas(tmp_path, proyecto, forzar=forzar)
-                        st.success(f"✓ {r['registros']} ventas cargadas — período {r['periodo']}")
 
                     elif tipo_archivo == "stock":
                         from ingesta.stock import ingestar_stock
@@ -465,7 +439,7 @@ elif pagina == "Análisis":
     sucursales = listar_sucursales(proyecto)
 
     if sucursales.empty:
-        st.info("No hay datos cargados. Ingresá movimientos y ventas primero.")
+        st.info("No hay datos cargados. Ingresá movimientos primero.")
     else:
         suc_opts = sucursales["codigodepo"].tolist()
         suc_label = dict(zip(sucursales["codigodepo"], sucursales["nombre"].fillna("")))

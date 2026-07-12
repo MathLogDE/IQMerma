@@ -6,16 +6,16 @@ de cada categoría de movimiento. Las categorías agrupan subtipos del ERP
 (`tipo`) según la tabla configurable `tipos_categoria`.
 
 Modelo (decisiones cerradas en MIGRACION_V2.md):
-  - Universo de SKUs: los que tengan algún movimiento O alguna venta en el
-    rango/sucursal (incluye SKUs con solo ventas).
+  - Fuente única: `movimientos` + `stock_sucursal` (+ catálogos). No hay tabla
+    de ventas: la venta se deriva de los movimientos VTA.
+  - Universo de SKUs: los que tengan algún movimiento en el rango/sucursal.
   - Por SKU y categoría: SUM(diferencia) (neto con signo), valorizado.
-  - Valorización: snapshot de `stock_sucursal` as-of <= fecha_hasta,
-    columna `costo` o `lista_1` según `modo_valorizacion`. Nunca se usa el
-    costo del movimiento (los subtipos del ERP son inconsistentes).
+  - Valorización: SIEMPRE desde `stock_sucursal` (snapshot as-of <= fecha_hasta,
+    columna `costo` o `lista_1` según `modo_valorizacion`). Nunca el costo del
+    movimiento.
   - Merma (numerador): parte negativa de las categorías marcadas es_merma.
-  - Denominador: unidades vendidas del archivo `ventas` (criterio_ventas),
-    valorizadas SIEMPRE desde el stock (costo o lista_1 según el modo). El
-    importe real (venta_neta) del archivo de ventas no se usa.
+  - Venta (denominador): unidades netas de las categorías marcadas es_venta
+    (la salida, en positivo), valorizadas desde el stock.
   - % merma = merma_total_valorizada / venta_neta * 100.
 
 Retorna un DataFrame ancho: una fila por SKU, una columna $ por categoría
@@ -32,7 +32,6 @@ Uso:
         fecha_desde="2026-01-01",
         fecha_hasta="2026-03-31",
         modo_valorizacion="costo",    # o "lista_1"
-        criterio_ventas="contenido",  # o "solapado" / "prorrateado"
     )
 """
 
@@ -44,7 +43,6 @@ import pandas as pd
 # Constantes
 # ---------------------------------------------------------------------------
 
-CRITERIOS_VENTAS = ("contenido", "solapado", "prorrateado")
 MODOS_VALORIZACION = ("costo", "lista_1")
 
 
@@ -61,54 +59,6 @@ def _get_connection(proyecto: str) -> duckdb.DuckDBPyConnection:
             f"Corré: python setup_db.py --project {proyecto}"
         )
     return duckdb.connect(str(db_path))
-
-
-def _sql_ventas(criterio: str) -> str:
-    """
-    Agregación de ventas por SKU dentro de la ventana fija [$desde, $hasta].
-    Mismos criterios que en v1 pero con ventana única (no por SKU).
-    """
-    if criterio == "contenido":
-        return """
-            SELECT codigo,
-                   SUM(unidades)   AS unidades_vendidas,
-                   SUM(venta_neta) AS venta_neta
-            FROM ventas
-            WHERE codigodepo  = $depo
-              AND fecha_desde >= $desde::DATE
-              AND fecha_hasta <= $hasta::DATE
-            GROUP BY codigo
-        """
-    if criterio == "solapado":
-        return """
-            SELECT codigo,
-                   SUM(unidades)   AS unidades_vendidas,
-                   SUM(venta_neta) AS venta_neta
-            FROM ventas
-            WHERE codigodepo  = $depo
-              AND fecha_hasta >= $desde::DATE
-              AND fecha_desde <= $hasta::DATE
-            GROUP BY codigo
-        """
-    # prorrateado: períodos solapados ponderados por días dentro de la ventana
-    return """
-        SELECT codigo,
-               SUM(unidades   * factor) AS unidades_vendidas,
-               SUM(venta_neta * factor) AS venta_neta
-        FROM (
-            SELECT v.codigo, v.unidades, v.venta_neta,
-                   (date_diff('day',
-                              GREATEST(v.fecha_desde, $desde::DATE),
-                              LEAST(v.fecha_hasta, $hasta::DATE)) + 1)::DOUBLE
-                   / NULLIF(date_diff('day', v.fecha_desde, v.fecha_hasta) + 1, 0)
-                   AS factor
-            FROM ventas v
-            WHERE v.codigodepo  = $depo
-              AND v.fecha_hasta >= $desde::DATE
-              AND v.fecha_desde <= $hasta::DATE
-        )
-        GROUP BY codigo
-    """
 
 
 def listar_categorias(proyecto: str) -> list[str]:
@@ -130,15 +80,14 @@ def listar_categorias(proyecto: str) -> list[str]:
 # Ensamblado (pandas)
 # ---------------------------------------------------------------------------
 
-def _ensamblar(df_comp, df_val, df_ventas, df_art, cats_orden,
-               modo, desde, hasta) -> pd.DataFrame:
+def _ensamblar(df_comp, df_val, df_art, cats_orden, modo, desde, hasta) -> pd.DataFrame:
     unit_col = "costo" if modo == "costo" else "lista_1"
     val = (df_val.set_index("codigo")[unit_col]
            if not df_val.empty else pd.Series(dtype="float64"))
 
-    universo = sorted(set(df_comp["codigo"]) | set(df_ventas["codigo"]))
+    universo = sorted(set(df_comp["codigo"]))
 
-    # --- pivot de categorías valorizadas + merma por SKU --------------------
+    # --- pivot de categorías valorizadas + merma + ventas por SKU -----------
     if not df_comp.empty:
         df_comp = df_comp.copy()
         df_comp["unit"] = df_comp["codigo"].map(val)
@@ -153,9 +102,12 @@ def _ensamblar(df_comp, df_val, df_ventas, df_art, cats_orden,
             values="neto_valorizado", aggfunc="sum",
         )
         merma_total = df_comp.groupby("codigo")["merma_contrib"].sum()
+        # unidades vendidas = -(neto de categorías es_venta): la venta es salida
+        vs = df_comp[df_comp["es_venta"]].groupby("codigo")["neto_unidades"].sum()
     else:
         pivot = pd.DataFrame()
         merma_total = pd.Series(dtype="float64")
+        vs = pd.Series(dtype="float64")
 
     # Columnas-categoría: orden del catálogo + cualquier extra que aparezca
     cats = list(cats_orden)
@@ -171,15 +123,8 @@ def _ensamblar(df_comp, df_val, df_ventas, df_art, cats_orden,
     res["merma_total_valorizada"] = merma_total
     res["merma_total_valorizada"] = res["merma_total_valorizada"].fillna(0.0)
 
-    # --- ventas (denominador) ----------------------------------------------
-    # Unidades vendidas del archivo de ventas; el importe se valoriza SIEMPRE
-    # desde el stock (costo o lista_1), en ambos modos — nunca el importe real
-    # del archivo de ventas.
-    dv = df_ventas.set_index("codigo")
-    res["unidades_vendidas"] = (
-        dv["unidades_vendidas"].reindex(res.index).fillna(0.0)
-        if not dv.empty else 0.0
-    )
+    # --- venta (denominador): unidades vendidas × precio de stock ----------
+    res["unidades_vendidas"] = (-vs).reindex(res.index).fillna(0.0)
     res["venta_neta"] = res["unidades_vendidas"] * res.index.map(val)
     res["venta_neta"] = res["venta_neta"].fillna(0.0)
 
@@ -220,7 +165,6 @@ def calcular_merma(
     fecha_desde: str,
     fecha_hasta: str,
     modo_valorizacion: str = "costo",
-    criterio_ventas: str = "contenido",
 ) -> pd.DataFrame:
     """
     Calcula merma por SKU para una sucursal y rango de fechas.
@@ -231,7 +175,6 @@ def calcular_merma(
         fecha_desde:       Inicio del período (YYYY-MM-DD), inclusive
         fecha_hasta:       Fin del período (YYYY-MM-DD), inclusive
         modo_valorizacion: "costo" (default) o "lista_1"
-        criterio_ventas:   "contenido" (default), "solapado" o "prorrateado"
 
     Returns:
         DataFrame ancho (una fila por SKU). `df.attrs["categorias"]` lista
@@ -240,10 +183,6 @@ def calcular_merma(
     if modo_valorizacion not in MODOS_VALORIZACION:
         raise ValueError(
             f"modo_valorizacion debe ser uno de {MODOS_VALORIZACION}, no '{modo_valorizacion}'"
-        )
-    if criterio_ventas not in CRITERIOS_VENTAS:
-        raise ValueError(
-            f"criterio_ventas debe ser uno de {CRITERIOS_VENTAS}, no '{criterio_ventas}'"
         )
 
     desde = str(pd.to_datetime(fecha_desde).date())
@@ -255,7 +194,7 @@ def calcular_merma(
     conn = _get_connection(proyecto)
     try:
         # Componentes: neto por SKU y categoría (LEFT JOIN para no perder
-        # subtipos sin mapear → caen en '(sin categoría)', es_merma=FALSE)
+        # subtipos sin mapear → caen en '(sin categoría)')
         df_comp = conn.execute("""
             WITH rango AS (
                 SELECT codigo, tipo, SUM(diferencia) AS neto_unidades
@@ -268,10 +207,11 @@ def calcular_merma(
             SELECT r.codigo,
                    COALESCE(t.categoria, '(sin categoría)') AS categoria,
                    COALESCE(t.es_merma, FALSE)              AS es_merma,
+                   COALESCE(t.es_venta, FALSE)              AS es_venta,
                    SUM(r.neto_unidades)                     AS neto_unidades
             FROM rango r
             LEFT JOIN tipos_categoria t ON r.tipo = t.tipo
-            GROUP BY 1, 2, 3
+            GROUP BY 1, 2, 3, 4
         """, params).df()
 
         # Valorización: snapshot más reciente <= fecha_hasta por SKU
@@ -286,9 +226,6 @@ def calcular_merma(
             ) = 1
         """, {"depo": codigodepo, "hasta": hasta}).df()
 
-        # Ventas (denominador)
-        df_ventas = conn.execute(_sql_ventas(criterio_ventas), params).df()
-
         # Descripción de artículos
         df_art = conn.execute("SELECT codigo, descripcion FROM articulos").df()
 
@@ -302,5 +239,5 @@ def calcular_merma(
     finally:
         conn.close()
 
-    return _ensamblar(df_comp, df_val, df_ventas, df_art, cats_orden,
+    return _ensamblar(df_comp, df_val, df_art, cats_orden,
                       modo_valorizacion, desde, hasta)

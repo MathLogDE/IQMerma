@@ -26,10 +26,10 @@ anclarse en un "evento de conteo".
    - Ajustes (**merma**) = CS
    - Remitido (no merma) = RE, RI, RDC
    - Subtipos sin mapear → "(sin categoría)", no suman a merma.
-5. **Universo de SKUs:** `DISTINCT codigo` de `movimientos` ∪ `ventas` en el
-   rango/sucursal (incluye SKUs con solo ventas).
-6. **Denominador (% merma):** por ahora `venta_neta` del archivo `ventas`
-   (enchufable a futuro hacia los movimientos VTA).
+5. **Universo de SKUs:** `DISTINCT codigo` de `movimientos` en el rango/sucursal.
+6. **Denominador (% merma):** se deriva de los movimientos VTA (categoría con
+   `es_venta`), valorizado desde el stock. **No hay tabla `ventas`** — se
+   eliminó del pipeline.
 
 ## Preguntas abiertas (bloquean parte del trabajo)
 

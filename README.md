@@ -22,8 +22,7 @@ mermaiq/
 ├── ui/
 │   └── app.py          # Interfaz Streamlit
 ├── ingesta/            # Carga de archivos del ERP
-│   ├── movimientos.py  #   movimientos + inventario físico (TIPOMOV='INV')
-│   ├── ventas.py       #   reporte de ventas
+│   ├── movimientos.py  #   movimientos: ventas (VTA), inventario (INV), remitos, ajustes
 │   ├── stock.py        #   snapshots de stock (valorización)
 │   └── referencias.py  #   depósitos, estructura, artículos
 ├── projects/           # Un .duckdb por cliente (excluido de git)
@@ -66,5 +65,5 @@ Donde:
 - **merma valorizada** = suma de faltantes de las categorías de merma
   (Inventario, Dif. de camión, Ajustes), valorizados contra el stock (costo o
   precio de lista).
-- **ventas del período** = venta del archivo de ventas (a costo o a precio de
-  lista según el modo elegido).
+- **ventas del período** = unidades vendidas (movimientos VTA) valorizadas
+  desde el stock (a costo o a precio de lista según el modo).

@@ -70,9 +70,12 @@ crear uno.
 2. **estructura** — rubros (para el análisis por Rubros).
 3. **articulos** — SKUs (descripción, rubro, activo).
 4. **stock** — snapshots (fuente de valorización: costo / lista_1).
-5. **movimientos** — incluye el inventario físico (TIPOMOV='INV').
-6. **ventas** — denominador del % de merma.
-7. **marcar logística** — marcar los centros de distribución (una vez).
+5. **movimientos** — fuente principal del análisis: incluye ventas (VTA), el
+   inventario físico (INV), remitos y ajustes.
+6. **marcar logística** — marcar los centros de distribución (una vez).
+
+> No hay archivo de ventas: la venta (denominador del %) se deriva de los
+> movimientos VTA (FA/FB/NCA/NCB), valorizada desde el stock.
 
 ### Formato de cada archivo
 
@@ -87,7 +90,6 @@ Columnas según el export del ERP (validadas contra archivos reales):
 | articulos | `Código` · `Descripción` · `Rubro` · `Marca` · `EAN` · `Clase` · `Activo?` (mínimo: Código, Descripción, Activo?) |
 | stock | `Código` · `Costo` · `Lista 1` · `Cant X Bulto` · + una columna por sucursal (encabezado = *Abreviatura* del depósito) |
 | movimientos | `FECHA` · `TIPOMOV` · `TIPO` · `NUMERO` · `CODIGODEPO` · `NOMBRE` · `CODIGO` · `COSTO` · `INGRESO` · `EGRESO` · `DIFERENCIA` · `USER` · `TIPO AJ` (obligatorias: FECHA, TIPOMOV, TIPO, NUMERO, CODIGODEPO, CODIGO) |
-| ventas | `FECHA DESDE` · `FECHA HASTA` · `CÓDIGO` · `COD. DEP.` · `TOTAL VTA.` · `TOTAL UNID.` |
 
 Notas:
 - Números en formato argentino (coma decimal) se parsean solos.
@@ -116,7 +118,6 @@ snapshot*. La pestaña **📋 Períodos cargados** muestra todo lo ya ingestado.
 from ingesta.referencias import cargar_depositos, cargar_estructura, cargar_articulos, marcar_logistica
 from ingesta.stock import ingestar_stock
 from ingesta.movimientos import ingestar_movimientos, ingestar_libro_movimientos
-from ingesta.ventas import ingestar_ventas
 
 PROY = "cliente_x"
 
@@ -128,9 +129,6 @@ ingestar_stock("data/stock_2026-03-31.xlsx", PROY, fecha_snapshot="2026-03-31")
 
 # Movimientos: un archivo con varias pestañas (una por mes) → una sola llamada
 ingestar_libro_movimientos("data/2026.xlsx", PROY)
-
-ingestar_ventas("data/ventas_2026-01.xlsx", PROY)
-ingestar_ventas("data/ventas_2026-02.xlsx", PROY)
 
 # Marcar centros de distribución (una vez)
 marcar_logistica(PROY, ["CDC", "CR2"])
@@ -183,9 +181,7 @@ Al arrancar el mes siguiente, cambiás a `sheet="08-26"`.
    datos disponibles.
 3. Elegí la **valorización**: *A costo* o *A precio de lista* (ver
    [sección 7](#7-cómo-se-calcula-la-merma)).
-4. (Opcional) En **Opciones avanzadas**, el *criterio de asignación de ventas*
-   (ver más abajo).
-5. Apretá **Calcular merma**.
+4. Apretá **Calcular merma**.
 
 **Qué ves:**
 - **Métricas arriba:** SKUs analizados, merma total valorizada, venta total del
@@ -197,15 +193,7 @@ Al arrancar el mes siguiente, cambiás a `sheet="08-26"`.
 - **Top 15 SKUs por merma:** gráfico de barras apiladas por las categorías que
   cuentan como merma.
 
-> El **universo de SKUs** son los que tuvieron algún movimiento o venta en el
-> rango. Un SKU con solo ventas aparece con merma 0 (suma al denominador).
-
-**Criterio de asignación de ventas** (cómo se cuentan los períodos de venta que
-cruzan el borde del rango elegido):
-- **contenido** — solo períodos de venta completamente dentro del rango.
-- **solapado** — cualquier período que toque el rango, sumado completo.
-- **prorrateado** — períodos solapados, ponderados por los días que caen dentro
-  del rango (recomendado si las ventas vienen por quincena/mes).
+> El **universo de SKUs** son los que tuvieron algún movimiento en el rango.
 
 ### Página Sucursales
 
@@ -225,24 +213,24 @@ de merma por rubro ordenadas y la curva de **% acumulado** (regla 80/20).
 `diferencia` (neta) de los movimientos del rango, y se valoriza contra el
 **stock** (snapshot más reciente ≤ fecha hasta).
 
-- **Categorías de merma** (suman al numerador): **Inventario (INV)**,
+- **Categorías de merma** (`es_merma`, suman al numerador): **Inventario (INV)**,
   **Dif. de camión (MD)** y **Ajustes (CS)** — solo su **parte negativa**
   (faltante).
-- **No son merma** (informativas): **Ventas** (FA/FB/NCA/NCB/FCA/NCCA) y
-  **Remitido** (RE/RI/RDC) — son flujos legítimos.
-- **Valorización — siempre desde el stock**, nunca el importe real del archivo
-  de ventas:
+- **Categoría de venta** (`es_venta`, denominador): **Ventas**
+  (FA/FB/NCA/NCB/FCA/NCCA). La venta del período = unidades netas vendidas
+  (la salida) valorizadas desde el stock. Las devoluciones (NCA/NCB) descuentan.
+- **No son ni merma ni venta**: **Remitido** (RE/RI/RDC) — flujos legítimos.
+- **Valorización — siempre desde el stock**:
   - *A costo* → unidades × `costo` del stock.
   - *A precio de lista* → unidades × `lista_1` del stock.
-  Esto aplica tanto a la merma como al denominador (la venta = unidades
-  vendidas × precio de stock, en ambos modos).
+  Aplica tanto al numerador (merma) como al denominador (venta), en ambos modos.
 - **% merma = merma total valorizada / venta del período × 100.**
 
-El mapeo `tipo → categoría` y qué suma a merma viven en la tabla
+El mapeo `tipo → categoría`, `es_merma` y `es_venta` viven en la tabla
 `tipos_categoria`, **editable sin tocar código** (ver
 [sección 8](#8-mantenimiento)). Un subtipo que no esté en el catálogo cae en la
-columna **"(sin categoría)"** y no suma a la merma (para que nada se pierda en
-silencio).
+columna **"(sin categoría)"** y no suma a merma ni a venta (para que nada se
+pierda en silencio).
 
 ## 8. Mantenimiento
 

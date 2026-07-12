@@ -50,7 +50,6 @@ SCHEMA_SQL = """
 
 -- Secuencias para IDs autoincrementales
 CREATE SEQUENCE IF NOT EXISTS seq_movimientos START 1;
-CREATE SEQUENCE IF NOT EXISTS seq_ventas START 1;
 CREATE SEQUENCE IF NOT EXISTS seq_periodos_ingesta START 1;
 CREATE SEQUENCE IF NOT EXISTS seq_stock_sucursal START 1;
 
@@ -58,7 +57,7 @@ CREATE SEQUENCE IF NOT EXISTS seq_stock_sucursal START 1;
 -- MOVIMIENTOS
 -- Exportación del ERP. Única fuente de flujos por sucursal y SKU.
 -- TIPOMOV:
---   VTA — ventas (informativo; la venta valorizada viene de `ventas`)
+--   VTA — ventas (FA/FB/NCA/NCB…; también son el denominador del %)
 --   REM — remitos (RE/RI)
 --   AJU — ajustes (incluye subtipo CS)
 --   INV — inventario físico (reemplaza a la antigua tabla `conteos`)
@@ -91,31 +90,6 @@ CREATE INDEX IF NOT EXISTS idx_mov_sku_depo_fecha
 
 CREATE INDEX IF NOT EXISTS idx_mov_tipomov_fecha
     ON movimientos (tipomov, fecha, codigodepo);
-
-
--- ============================================================
--- VENTAS
--- Reporte de ventas mensual por sucursal y SKU. Agregado (no por
--- operación). `venta_neta` es el importe a PRECIO de venta — es la
--- valorización de venta cuando se analiza en modo "lista_1".
--- En modo "costo" la venta se revaloriza como unidades * costo_stock.
--- ============================================================
-CREATE TABLE IF NOT EXISTS ventas (
-    id               INTEGER PRIMARY KEY DEFAULT nextval('seq_ventas'),
-    codigodepo       VARCHAR     NOT NULL,
-    codigo           VARCHAR     NOT NULL,
-    descripcion      VARCHAR,
-    fecha_desde      DATE        NOT NULL,  -- primer día del mes
-    fecha_hasta      DATE        NOT NULL,  -- último día del mes
-    unidades         DECIMAL(18,4),
-    venta_neta       DECIMAL(18,4),         -- importe neto a precio de venta
-
-    archivo_origen   VARCHAR     NOT NULL,
-    fecha_ingesta    TIMESTAMP   NOT NULL DEFAULT current_timestamp
-);
-
-CREATE INDEX IF NOT EXISTS idx_ventas_sku_depo_periodo
-    ON ventas (codigo, codigodepo, fecha_desde, fecha_hasta);
 
 
 -- ============================================================
@@ -213,7 +187,8 @@ CREATE TABLE IF NOT EXISTS tipos_categoria (
     tipo          VARCHAR PRIMARY KEY,   -- subtipo del ERP: FA, INV, RI, MD, CS, ...
     tipomov       VARCHAR,               -- tipomov asociado (informativo)
     categoria     VARCHAR     NOT NULL,  -- Ventas, Inventario, Remitido, Dif. de camión, ...
-    es_merma      BOOLEAN     DEFAULT TRUE,
+    es_merma      BOOLEAN     DEFAULT TRUE,   -- la parte negativa suma a la merma
+    es_venta      BOOLEAN     DEFAULT FALSE,  -- cuenta como venta (denominador del %)
     orden         INTEGER,               -- orden de despliegue de columnas
     fecha_ingesta TIMESTAMP
 );
@@ -258,22 +233,24 @@ INNER JOIN (
 # Seed: catálogo por defecto de tipos -> categoría
 # ---------------------------------------------------------------------------
 # Catálogo del ERP. El cliente puede editar/extender esta tabla sin tocar
-# código. Merma (es_merma=TRUE) = pérdida no explicada: Inventario, Dif. de
-# camión y Ajustes. Ventas, Compras y Remitos son flujos legítimos (no merma).
+# código.
+#   es_merma=TRUE  -> pérdida no explicada: Inventario, Dif. de camión, Ajustes.
+#   es_venta=TRUE  -> cuenta como venta (denominador del %): Ventas.
+# Remitos son flujos legítimos (ni merma ni venta).
 DEFAULT_TIPOS_CATEGORIA = [
-    # (tipo,  tipomov, categoria,         es_merma, orden)
-    ("FA",   "VTA", "Ventas",         False, 1),  # Factura A
-    ("FB",   "VTA", "Ventas",         False, 1),  # Factura B
-    ("NCA",  "VTA", "Ventas",         False, 1),  # Nota crédito A
-    ("NCB",  "VTA", "Ventas",         False, 1),  # Nota crédito B
-    ("FCA",  "VTA", "Ventas",         False, 1),  # Factura compra A
-    ("NCCA", "VTA", "Ventas",         False, 1),  # Nota crédito compra A
-    ("INV",  "INV", "Inventario",     True,  2),  # Inventario físico
-    ("MD",   "REM", "Dif. de camión", True,  3),  # Movimiento directo
-    ("CS",   "AJU", "Ajustes",        True,  4),  # Control de stock
-    ("RE",   "REM", "Remitido",       False, 5),  # Remito externo (recepción)
-    ("RI",   "REM", "Remitido",       False, 5),  # Remito interno (transferencia)
-    ("RDC",  "REM", "Remitido",       False, 5),  # Remito devolución compra
+    # (tipo,  tipomov, categoria,         es_merma, es_venta, orden)
+    ("FA",   "VTA", "Ventas",         False, True,  1),  # Factura A
+    ("FB",   "VTA", "Ventas",         False, True,  1),  # Factura B
+    ("NCA",  "VTA", "Ventas",         False, True,  1),  # Nota crédito A
+    ("NCB",  "VTA", "Ventas",         False, True,  1),  # Nota crédito B
+    ("FCA",  "VTA", "Ventas",         False, True,  1),  # Factura compra A
+    ("NCCA", "VTA", "Ventas",         False, True,  1),  # Nota crédito compra A
+    ("INV",  "INV", "Inventario",     True,  False, 2),  # Inventario físico
+    ("MD",   "REM", "Dif. de camión", True,  False, 3),  # Movimiento directo
+    ("CS",   "AJU", "Ajustes",        True,  False, 4),  # Control de stock
+    ("RE",   "REM", "Remitido",       False, False, 5),  # Remito externo (recepción)
+    ("RI",   "REM", "Remitido",       False, False, 5),  # Remito interno (transferencia)
+    ("RDC",  "REM", "Remitido",       False, False, 5),  # Remito devolución compra
 ]
 
 
@@ -286,9 +263,9 @@ def _sembrar_tipos_categoria(conn: duckdb.DuckDBPyConnection) -> None:
     now = datetime.now(timezone.utc)
     conn.executemany(
         "INSERT INTO tipos_categoria "
-        "(tipo, tipomov, categoria, es_merma, orden, fecha_ingesta) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        [(t, tm, cat, em, o, now) for (t, tm, cat, em, o) in DEFAULT_TIPOS_CATEGORIA],
+        "(tipo, tipomov, categoria, es_merma, es_venta, orden, fecha_ingesta) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(t, tm, cat, em, ev, o, now) for (t, tm, cat, em, ev, o) in DEFAULT_TIPOS_CATEGORIA],
     )
     print(f"  Catálogo tipos_categoria sembrado ({len(DEFAULT_TIPOS_CATEGORIA)} subtipos por defecto)")
 
@@ -305,19 +282,18 @@ def setup(project_name: str, reset: bool = False) -> None:
         print(f"  [RESET] Eliminando objetos existentes en '{project_name}'...")
         conn.execute("DROP VIEW IF EXISTS stock_actual")
         tables = [
-            "movimientos", "ventas", "stock_sucursal",
+            "movimientos", "stock_sucursal",
             "periodos_ingesta", "depositos", "estructura", "articulos",
             "tipos_categoria",
-            # legacy v1 — se eliminan si existen
-            "conteos", "costo_sku_historial",
+            # legacy — se eliminan si existen
+            "ventas", "conteos", "costo_sku_historial",
         ]
         for table in tables:
             conn.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
         sequences = [
-            "seq_movimientos", "seq_ventas", "seq_periodos_ingesta",
-            "seq_stock_sucursal",
-            # legacy v1
-            "seq_conteos", "seq_costo_sku",
+            "seq_movimientos", "seq_periodos_ingesta", "seq_stock_sucursal",
+            # legacy
+            "seq_ventas", "seq_conteos", "seq_costo_sku",
         ]
         for seq in sequences:
             conn.execute(f"DROP SEQUENCE IF EXISTS {seq}")
