@@ -230,11 +230,12 @@ de merma por rubro ordenadas y la curva de **% acumulado** (regla 80/20).
   (faltante).
 - **No son merma** (informativas): **Ventas** (FA/FB/NCA/NCB/FCA/NCCA) y
   **Remitido** (RE/RI/RDC) — son flujos legítimos.
-- **Valorización:**
-  - *A costo* → unidades × `costo` del stock. La venta también se revaloriza
-    como `unidades_vendidas × costo`.
-  - *A precio de lista* → unidades × `lista_1` del stock. La venta usa el
-    importe real `venta_neta` del archivo de ventas.
+- **Valorización — siempre desde el stock**, nunca el importe real del archivo
+  de ventas:
+  - *A costo* → unidades × `costo` del stock.
+  - *A precio de lista* → unidades × `lista_1` del stock.
+  Esto aplica tanto a la merma como al denominador (la venta = unidades
+  vendidas × precio de stock, en ambos modos).
 - **% merma = merma total valorizada / venta del período × 100.**
 
 El mapeo `tipo → categoría` y qué suma a merma viven en la tabla

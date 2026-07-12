@@ -13,9 +13,9 @@ Modelo (decisiones cerradas en MIGRACION_V2.md):
     columna `costo` o `lista_1` según `modo_valorizacion`. Nunca se usa el
     costo del movimiento (los subtipos del ERP son inconsistentes).
   - Merma (numerador): parte negativa de las categorías marcadas es_merma.
-  - Denominador: venta del archivo `ventas` (criterio_ventas). En modo
-    "costo" la venta se revaloriza como unidades_vendidas * costo_snapshot;
-    en modo "lista_1" se usa venta_neta (importe real a precio de venta).
+  - Denominador: unidades vendidas del archivo `ventas` (criterio_ventas),
+    valorizadas SIEMPRE desde el stock (costo o lista_1 según el modo). El
+    importe real (venta_neta) del archivo de ventas no se usa.
   - % merma = merma_total_valorizada / venta_neta * 100.
 
 Retorna un DataFrame ancho: una fila por SKU, una columna $ por categoría
@@ -172,18 +172,15 @@ def _ensamblar(df_comp, df_val, df_ventas, df_art, cats_orden,
     res["merma_total_valorizada"] = res["merma_total_valorizada"].fillna(0.0)
 
     # --- ventas (denominador) ----------------------------------------------
+    # Unidades vendidas del archivo de ventas; el importe se valoriza SIEMPRE
+    # desde el stock (costo o lista_1), en ambos modos — nunca el importe real
+    # del archivo de ventas.
     dv = df_ventas.set_index("codigo")
     res["unidades_vendidas"] = (
         dv["unidades_vendidas"].reindex(res.index).fillna(0.0)
         if not dv.empty else 0.0
     )
-    if modo == "costo":
-        res["venta_neta"] = res["unidades_vendidas"] * res.index.map(val)
-    else:
-        res["venta_neta"] = (
-            dv["venta_neta"].reindex(res.index)
-            if not dv.empty else pd.Series(index=res.index, dtype="float64")
-        )
+    res["venta_neta"] = res["unidades_vendidas"] * res.index.map(val)
     res["venta_neta"] = res["venta_neta"].fillna(0.0)
 
     # --- % merma sobre ventas ----------------------------------------------
