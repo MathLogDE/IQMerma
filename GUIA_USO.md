@@ -210,6 +210,25 @@ actualizan con el filtro.
 
 > El **universo de SKUs** son los que tuvieron algún movimiento en el rango.
 
+### Página Salud de stock
+
+Cruza el stock (snapshot elegible) con la demanda reciente (ventana de 30 a
+180 días) y clasifica cada SKU × sucursal:
+
+| Estado | Significado |
+|---|---|
+| 🔴 Quiebre | Stock 0 con demanda → muestra la **venta perdida estimada $/día** |
+| 🟠 Crítico | Cobertura por debajo del mínimo de la banda |
+| 🟢 OK | Cobertura dentro de la banda saludable |
+| 🔵 Sobrestock | Cobertura por encima del máximo → capital inmovilizado |
+| ⚫ Muerto | Stock sin ventas en la ventana → liquidar / redistribuir |
+
+La **banda de cobertura** (mín/máx en días) es ajustable. Los depósitos
+marcados `es_logistica` se excluyen por defecto (los CD no venden). Filtros
+por estado / gran super rubro / búsqueda, descarga Excel/CSV y gráficos:
+conteo y capital por estado, top quiebres por venta perdida y stock muerto
+por rubro.
+
 ### Página Sucursales
 
 Mismo rango y valorización, pero calcula la comparativa de **todas las
