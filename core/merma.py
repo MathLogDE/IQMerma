@@ -414,7 +414,9 @@ def merma_por_sucursal(
             [fv] if fecha_valorizacion else [],
         ).fetchone()[0]
 
-        df_dep = conn.execute("SELECT codigodepo, nombre FROM depositos").df()
+        df_dep = conn.execute(
+            "SELECT codigodepo, nombre, es_logistica FROM depositos"
+        ).df()
         cats_orden = [
             r[0] for r in conn.execute("""
                 SELECT categoria FROM tipos_categoria
@@ -485,7 +487,8 @@ def merma_por_sucursal(
     ).round(4)
 
     res = res.reset_index().merge(df_dep, on="codigodepo", how="left")
-    cols = (["codigodepo", "nombre", "skus", "skus_con_merma"]
+    res["es_logistica"] = res["es_logistica"].fillna(False)
+    cols = (["codigodepo", "nombre", "es_logistica", "skus", "skus_con_merma"]
             + [x for c in cats for x in (c, f"{c} (u)")]
             + ["merma_total_valorizada", "merma_total_unidades",
                "unidades_vendidas", "venta_neta", "pct_merma_sobre_ventas"])

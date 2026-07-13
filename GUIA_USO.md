@@ -210,6 +210,28 @@ actualizan con el filtro.
 
 > El **universo de SKUs** son los que tuvieron algún movimiento en el rango.
 
+### Página Control de merma
+
+Auditoría de la merma en tres vistas (mismos controles de período y
+valorización):
+
+- **Evolución mensual**: merma apilada por categoría + línea de % sobre venta,
+  mes a mes, con la variación del último mes. Detecta tendencias.
+- **Outliers**: los movimientos individuales de mayor impacto $ del período,
+  con usuario, comprobante y % que representan de la merma bruta. Pares de
+  igual magnitud y signo opuesto suelen ser anulaciones/correcciones.
+- **Merma por usuario**: faltantes y sobrantes valorizados por usuario ×
+  sucursal. Mucho volumen en ambos sentidos = correcciones cruzadas.
+
+Todo descargable en Excel/CSV.
+
+### Ingesta → ⚙ Depósitos
+
+Editor para marcar los **centros de logística** (`es_logistica`) desde la UI.
+Los CD se excluyen por defecto de la comparativa por sucursal (checkbox
+"Excluir depósitos logísticos") y del análisis de salud de stock — no venden,
+distorsionan el % de merma.
+
 ### Página Salud de stock
 
 Cruza el stock (snapshot elegible) con la demanda reciente (ventana de 30 a

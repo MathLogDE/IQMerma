@@ -33,6 +33,9 @@ from core.merma import (
 )
 from core.reporte import generar_reporte
 from core.salud_stock import analizar_stock, resumen_salud, ESTADOS
+from core.control_merma import (
+    evolucion_mensual, movimientos_outliers, ajustes_por_usuario,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +343,8 @@ with st.sidebar:
 
     pagina = st.radio(
         "NAVEGACIÓN",
-        ["Inicio", "Ingesta", "Análisis", "Salud de stock", "Sucursales", "Rubros"],
+        ["Inicio", "Ingesta", "Análisis", "Control de merma",
+         "Salud de stock", "Sucursales", "Rubros"],
         key="pagina_activa",
     )
 
@@ -443,7 +447,9 @@ if pagina == "Inicio":
 elif pagina == "Ingesta":
     st.title("Ingesta de datos")
 
-    tab1, tab2 = st.tabs(["📋 Períodos cargados", "📁 Cargar archivo"])
+    tab1, tab2, tab3 = st.tabs(
+        ["📋 Períodos cargados", "📁 Cargar archivo", "⚙ Depósitos"]
+    )
 
     with tab1:
         df_periodos = listar_periodos_ingesta(proyecto)
@@ -550,6 +556,51 @@ elif pagina == "Ingesta":
                 st.error(f"Error: {e}")
             finally:
                 tmp_path.unlink(missing_ok=True)
+
+    with tab3:
+        st.markdown("#### Depósitos y centros de logística")
+        st.caption(
+            "Marcá `es_logistica` para los centros de distribución (CDC, CR2…). "
+            "Los CD se excluyen de las comparativas de merma y del análisis de "
+            "salud de stock. El flag se preserva al recargar el archivo de depósitos."
+        )
+        conn = get_connection(proyecto)
+        df_deps = conn.execute("""
+            SELECT codigodepo, nombre, abreviacion, es_logistica
+            FROM depositos ORDER BY codigodepo
+        """).df()
+        conn.close()
+
+        if df_deps.empty:
+            st.info("No hay depósitos cargados.")
+        else:
+            df_edit = st.data_editor(
+                df_deps,
+                column_config={
+                    "codigodepo":   st.column_config.TextColumn("Código", disabled=True),
+                    "nombre":       st.column_config.TextColumn("Nombre", disabled=True),
+                    "abreviacion":  st.column_config.TextColumn("Abrev.", disabled=True),
+                    "es_logistica": st.column_config.CheckboxColumn("Logística (CD)"),
+                },
+                hide_index=True, width="stretch", key="editor_deps",
+            )
+            if st.button("Guardar cambios", key="save_deps"):
+                cambios = df_edit[
+                    df_edit["es_logistica"].fillna(False)
+                    != df_deps["es_logistica"].fillna(False)
+                ]
+                if cambios.empty:
+                    st.info("No hay cambios para guardar.")
+                else:
+                    conn = get_connection(proyecto)
+                    for _, r in cambios.iterrows():
+                        conn.execute(
+                            "UPDATE depositos SET es_logistica = ? WHERE codigodepo = ?",
+                            [bool(r["es_logistica"]), r["codigodepo"]],
+                        )
+                    conn.close()
+                    st.success(f"✓ {len(cambios)} depósitos actualizados")
+                    st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +832,13 @@ elif pagina == "Análisis":
                     )
                 if filtrado:
                     st.caption("La comparativa respeta los filtros aplicados arriba.")
+                sin_log = st.checkbox(
+                    "Excluir depósitos logísticos (CD)", value=True, key="comp_sinlog",
+                    help="Los CD no venden: distorsionan el % de merma. "
+                         "Marcalos en Ingesta → Depósitos.",
+                )
+                if sin_log and "es_logistica" in df_suc.columns:
+                    df_suc = df_suc[~df_suc["es_logistica"].fillna(False)]
                 render_comparativa(df_suc, merma_cats, "comp")
 
             # --- Reporte imprimible ----------------------------------------------
@@ -812,6 +870,161 @@ elif pagina == "Análisis":
                 "text/html", key="dl_reporte",
             )
             st.caption("Abrilo en el navegador e imprimí con Ctrl+P (o guardá como PDF).")
+
+
+# ---------------------------------------------------------------------------
+# Página: CONTROL DE MERMA
+# ---------------------------------------------------------------------------
+
+elif pagina == "Control de merma":
+    st.title("Control de merma")
+
+    sucursales = listar_sucursales(proyecto)
+    if sucursales.empty:
+        st.info("No hay datos cargados. Ingresá movimientos primero.")
+    else:
+        TODAS_C = "__todas__"
+        suc_label = dict(zip(sucursales["codigodepo"], sucursales["nombre"].fillna("")))
+        suc_sel = st.selectbox(
+            "Sucursal", [TODAS_C] + sucursales["codigodepo"].tolist(),
+            format_func=lambda c: ("⊕ Todas las sucursales" if c == TODAS_C
+                                   else f"{c} — {suc_label.get(c, '')}".strip(" —")),
+            key="control_suc",
+        )
+        ctrl = controles_periodo(proyecto, "control")
+
+        if ctrl and st.button("Analizar"):
+            with st.spinner("Analizando..."):
+                try:
+                    depo = None if suc_sel == TODAS_C else suc_sel
+                    comunes = dict(
+                        codigodepo=depo,
+                        modo_valorizacion=ctrl["modo_valorizacion"],
+                        fecha_valorizacion=ctrl["fecha_valorizacion"],
+                    )
+                    st.session_state["ctrl_ev"] = evolucion_mensual(
+                        proyecto, fecha_desde=ctrl["fecha_desde"],
+                        fecha_hasta=ctrl["fecha_hasta"], **comunes)
+                    st.session_state["ctrl_out"] = movimientos_outliers(
+                        proyecto, ctrl["fecha_desde"], ctrl["fecha_hasta"],
+                        top_n=100, **comunes)
+                    st.session_state["ctrl_us"] = ajustes_por_usuario(
+                        proyecto, ctrl["fecha_desde"], ctrl["fecha_hasta"], **comunes)
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+        layout_oscuro = dict(
+            plot_bgcolor="#0f1117", paper_bgcolor="#0f1117",
+            font=dict(color="#ccd6f6", family="IBM Plex Mono"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        )
+
+        # --- 1. Evolución mensual ------------------------------------------
+        if "ctrl_ev" in st.session_state:
+            ev = st.session_state["ctrl_ev"]
+            st.markdown("---")
+            st.markdown("### Evolución mensual de la merma")
+            if ev.empty:
+                st.info("Sin movimientos en el período.")
+            else:
+                if len(ev) >= 2:
+                    ult, ant = ev.iloc[-1], ev.iloc[-2]
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric(f"Merma {ult['mes']}", formatear_pesos(ult["merma_total"]),
+                              delta=formatear_pesos(ult["merma_total"] - ant["merma_total"]),
+                              delta_color="inverse")
+                    c2.metric(f"Venta {ult['mes']}", formatear_pesos(ult["venta_neta"]))
+                    c3.metric(f"% Merma {ult['mes']}", formatear_pct(ult["pct_merma_sobre_ventas"]),
+                              delta=(f"{float(ult['pct_merma_sobre_ventas'] or 0) - float(ant['pct_merma_sobre_ventas'] or 0):+.2f} pp"),
+                              delta_color="inverse")
+
+                cats_ev = [c for c in ev.attrs.get("categorias_merma", []) if c in ev.columns]
+                fig = go.Figure()
+                for i, cat in enumerate(cats_ev):
+                    fig.add_bar(name=cat, x=ev["mes"], y=ev[cat],
+                                marker_color=PALETA[i % len(PALETA)])
+                fig.add_scatter(
+                    name="% Merma s/venta", x=ev["mes"], y=ev["pct_merma_sobre_ventas"],
+                    mode="lines+markers", line=dict(color="#64ffda", width=2),
+                    marker=dict(size=7), yaxis="y2",
+                )
+                fig.update_layout(
+                    barmode="stack", height=420,
+                    xaxis=dict(gridcolor="#1e2130"),
+                    yaxis=dict(title="Merma $", gridcolor="#1e2130"),
+                    yaxis2=dict(title="% Merma", overlaying="y", side="right",
+                                gridcolor="#1e2130", ticksuffix="%"),
+                    **layout_oscuro,
+                )
+                st.plotly_chart(fig, width="stretch")
+                botones_descarga(ev, "evolucion_mensual_merma", "ev")
+
+        # --- 2. Outliers ------------------------------------------------------
+        if "ctrl_out" in st.session_state:
+            out = st.session_state["ctrl_out"]
+            st.markdown("---")
+            st.markdown("### Movimientos de mayor impacto (outliers)")
+            if out.empty:
+                st.info("Sin movimientos de merma en el período.")
+            else:
+                st.caption(
+                    f"Merma bruta del período (faltantes por movimiento): "
+                    f"**{formatear_pesos(out.attrs.get('merma_periodo'))}** · "
+                    "un movimiento que concentre un % alto merece revisión en el ERP. "
+                    "Pares de igual magnitud y signo opuesto suelen ser anulaciones."
+                )
+                top_n = st.slider("Mostrar top", 10, 100, 25, key="out_topn")
+                df_o = out.head(top_n).copy()
+                df_o["fecha"] = pd.to_datetime(df_o["fecha"]).dt.date
+                df_o["valor"] = df_o["valor"].apply(formatear_pesos)
+                df_o["unidades"] = df_o["unidades"].apply(formatear_unidades)
+                df_o["pct_merma_periodo"] = df_o["pct_merma_periodo"].apply(formatear_pct)
+                df_o = df_o[["fecha", "codigodepo", "sucursal", "tipo", "numero",
+                             "usuario", "codigo", "descripcion", "unidades",
+                             "valor", "pct_merma_periodo"]]
+                df_o.columns = ["Fecha", "Cód.", "Sucursal", "Tipo", "N°", "Usuario",
+                                "SKU", "Descripción", "Unid.", "Valor $", "% Merma per."]
+                st.dataframe(df_o, width="stretch", hide_index=True)
+                botones_descarga(out, "outliers_merma", "out")
+
+        # --- 3. Ajustes por usuario -----------------------------------------
+        if "ctrl_us" in st.session_state:
+            us = st.session_state["ctrl_us"]
+            st.markdown("---")
+            st.markdown("### Merma por usuario")
+            if us.empty:
+                st.info("Sin ajustes en el período.")
+            else:
+                st.caption(
+                    "Faltantes y sobrantes valorizados por usuario × sucursal. "
+                    "Mucho volumen en ambos sentidos = correcciones cruzadas (revisar operatoria)."
+                )
+                g1, g2 = st.columns([1, 1])
+                with g1:
+                    top_u = (us.groupby("usuario")["faltante_valorizado"].sum()
+                             .sort_values(ascending=False).head(10))
+                    fig = go.Figure(go.Bar(
+                        x=top_u.values, y=top_u.index, orientation="h",
+                        marker_color="#ff6b6b",
+                    ))
+                    fig.update_layout(
+                        height=380, xaxis=dict(title="Faltante $", gridcolor="#1e2130"),
+                        yaxis=dict(autorange="reversed", gridcolor="#1e2130"),
+                        **layout_oscuro,
+                    )
+                    st.plotly_chart(fig, width="stretch")
+                with g2:
+                    df_u = us.copy()
+                    for c in ["faltante_valorizado", "sobrante_valorizado", "neto_valorizado"]:
+                        df_u[c] = df_u[c].apply(formatear_pesos)
+                    df_u["pct_faltante"] = df_u["pct_faltante"].apply(formatear_pct)
+                    df_u = df_u[["usuario", "codigodepo", "movimientos", "skus",
+                                 "faltante_valorizado", "sobrante_valorizado",
+                                 "neto_valorizado", "pct_faltante"]]
+                    df_u.columns = ["Usuario", "Suc.", "Movs", "SKUs",
+                                    "Faltante $", "Sobrante $", "Neto $", "% Falt."]
+                    st.dataframe(df_u, width="stretch", hide_index=True, height=380)
+                botones_descarga(us, "merma_por_usuario", "us")
 
 
 # ---------------------------------------------------------------------------
@@ -1049,6 +1262,14 @@ elif pagina == "Sucursales":
         if "df_sucursales" in st.session_state:
             df_res = st.session_state["df_sucursales"]
             merma_cats = st.session_state.get("cats_merma_suc", [])
+
+            sin_log = st.checkbox(
+                "Excluir depósitos logísticos (CD)", value=True, key="suc_sinlog",
+                help="Los CD no venden: distorsionan el % de merma. "
+                     "Marcalos en Ingesta → Depósitos.",
+            )
+            if sin_log and "es_logistica" in df_res.columns:
+                df_res = df_res[~df_res["es_logistica"].fillna(False)]
 
             merma_t = df_res["merma_total_valorizada"].sum()
             venta_t = df_res["venta_neta"].sum()
