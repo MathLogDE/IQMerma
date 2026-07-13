@@ -251,6 +251,22 @@ por estado / gran super rubro / búsqueda, descarga Excel/CSV y gráficos:
 conteo y capital por estado, top quiebres por venta perdida y stock muerto
 por rubro.
 
+### Página Min / Opt / Max
+
+Políticas de inventario por SKU × sucursal (revisión periódica, order-up-to):
+
+- **Ciclo de reposición estimado de los datos**: mediana de días entre
+  llegadas (Remitido entrante), con fallback SKU global → rubro → default.
+- **Clase ABC** dinámica (participación en la venta valorizada, 80/95 por
+  sucursal) → nivel de servicio A 95% · B 90% · C 80%; **clase XYZ** por
+  regularidad de la demanda (CV semanal).
+- **Bandas**: seguridad = z·σd·√(lead+ciclo); Mín = demanda·lead + seguridad;
+  Ópt = demanda·(lead+ciclo) + seguridad; Máx = Ópt + seguridad.
+- **Estados**: 🔴 Reponer (con compra sugerida hasta el óptimo, redondeada a
+  bultos cuando el bulto cabe en el óptimo) · 🟢 OK · 🔵 Exceso · ⚫ Sin demanda.
+- Parámetros ajustables: lead time y ciclo default. KPIs, matriz ABC×XYZ,
+  top compras sugeridas y descarga Excel/CSV.
+
 ### Página Sucursales
 
 Mismo rango y valorización, pero calcula la comparativa de **todas las
