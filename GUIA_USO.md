@@ -199,14 +199,27 @@ actualizan con el filtro.
   stock, negativo = salió).
 - **Dashboard:** composición de la merma por categoría (dona), top 15 SKUs por
   merma (barras apiladas) y merma vs % de merma por gran super rubro.
+- **Comparativa por sucursal** (solo con "Todas"): tabla por sucursal (merma por
+  categoría en $ y unidades, venta, %) + gráfico apilado con la línea de %.
+  Respeta los filtros aplicados.
+- **Exportar:** botones **⬇ Excel** / **⬇ CSV** debajo del detalle y de la
+  comparativa (descargan el listado con los filtros aplicados), y
+  **🖨 Reporte imprimible**: un HTML autocontenido con KPIs, composición,
+  comparativa, merma por rubro y top SKUs — se abre en el navegador y se
+  imprime o guarda como PDF con Ctrl+P.
 
 > El **universo de SKUs** son los que tuvieron algún movimiento en el rango.
 
 ### Página Sucursales
 
-Mismo rango y valorización, pero calcula **todas las sucursales** y las compara:
-métricas globales, una tabla con la merma por categoría de cada sucursal, y un
-gráfico comparativo. Útil para detectar qué locales concentran la merma.
+Mismo rango y valorización, pero calcula la comparativa de **todas las
+sucursales** en una sola pasada: métricas globales, tabla por sucursal (merma
+por categoría en $ y unidades, venta, %), gráfico apilado con línea de % y
+descarga Excel/CSV. Útil para detectar qué locales concentran la merma.
+
+> Ojo: los **centros de distribución** aparecen en la comparativa con venta
+> baja o negativa (no venden; reciben). Al comparar % de merma entre locales,
+> mirá las sucursales de venta.
 
 ### Página Rubros
 

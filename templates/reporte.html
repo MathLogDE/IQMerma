@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>MermaIQ — {{ meta.proyecto }} — {{ meta.fecha_desde }} a {{ meta.fecha_hasta }}</title>
+<style>
+    :root {
+        --tinta:   #1a2233;
+        --gris:    #5b6472;
+        --linea:   #d9dee6;
+        --fondo:   #f4f6f9;
+        --rojo:    #c0392b;
+        --naranja: #d68910;
+        --azul:    #2e5aac;
+        --verde:   #1e8449;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: "Segoe UI", Arial, sans-serif;
+        color: var(--tinta);
+        font-size: 10.5pt;
+        line-height: 1.45;
+        padding: 24px 32px;
+        max-width: 900px;
+        margin: 0 auto;
+    }
+    @page { size: A4; margin: 14mm 12mm; }
+    @media print {
+        body { padding: 0; max-width: none; }
+        .seccion { break-inside: avoid; }
+        a { color: inherit; text-decoration: none; }
+    }
+
+    /* --- encabezado --- */
+    header { border-bottom: 3px solid var(--tinta); padding-bottom: 12px; margin-bottom: 18px; }
+    header h1 { font-size: 17pt; letter-spacing: -0.02em; }
+    header h1 span { color: var(--rojo); }
+    .meta { display: flex; flex-wrap: wrap; gap: 4px 26px; margin-top: 8px; color: var(--gris); font-size: 9pt; }
+    .meta b { color: var(--tinta); font-weight: 600; }
+
+    /* --- KPIs --- */
+    .kpis { display: flex; gap: 10px; margin: 14px 0 20px; }
+    .kpi { flex: 1; background: var(--fondo); border: 1px solid var(--linea); border-radius: 6px; padding: 10px 12px; }
+    .kpi .etiqueta { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.08em; color: var(--gris); }
+    .kpi .valor { font-size: 13.5pt; font-weight: 700; margin-top: 2px; }
+    .kpi .detalle { font-size: 8pt; color: var(--gris); }
+    .kpi.alerta .valor { color: var(--rojo); }
+
+    /* --- secciones y tablas --- */
+    .seccion { margin-bottom: 22px; }
+    .seccion h2 {
+        font-size: 11.5pt; margin-bottom: 8px; padding-bottom: 4px;
+        border-bottom: 1.5px solid var(--linea);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 8.8pt; }
+    th {
+        text-align: left; font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--gris); padding: 5px 8px; border-bottom: 1.5px solid var(--tinta);
+    }
+    td { padding: 4px 8px; border-bottom: 1px solid var(--linea); vertical-align: middle; }
+    tr:nth-child(even) td { background: #fafbfd; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .rojo { color: var(--rojo); font-weight: 600; }
+    tfoot td { border-top: 2px solid var(--tinta); border-bottom: none; font-weight: 700; background: var(--fondo) !important; }
+
+    /* --- barras CSS --- */
+    .barra-celda { min-width: 110px; }
+    .barra { height: 9px; border-radius: 3px; background: var(--rojo); min-width: 2px; }
+    .barra.venta { background: var(--azul); }
+
+    footer {
+        margin-top: 26px; padding-top: 8px; border-top: 1px solid var(--linea);
+        color: var(--gris); font-size: 8pt; display: flex; justify-content: space-between;
+    }
+</style>
+</head>
+<body>
+
+<header>
+    <h1>Merma<span>IQ</span> — Reporte de merma</h1>
+    <div class="meta">
+        <span>Proyecto: <b>{{ meta.proyecto }}</b></span>
+        <span>Alcance: <b>{{ meta.sucursal }}</b></span>
+        <span>Período: <b>{{ meta.fecha_desde }} → {{ meta.fecha_hasta }}</b></span>
+        <span>Valorización: <b>{{ meta.modo }}</b> (stock del <b>{{ meta.fecha_valorizacion }}</b>)</span>
+        {% if meta.filtros %}<span>Filtros: <b>{{ meta.filtros }}</b></span>{% endif %}
+    </div>
+</header>
+
+<div class="kpis">
+    <div class="kpi"><div class="etiqueta">SKUs analizados</div><div class="valor">{{ kpi.skus | unidades }}</div>
+        <div class="detalle">{{ kpi.skus_con_merma | unidades }} con merma</div></div>
+    <div class="kpi alerta"><div class="etiqueta">Merma total</div><div class="valor">{{ kpi.merma | pesos }}</div>
+        <div class="detalle">{{ kpi.merma_u | unidades }} unidades</div></div>
+    <div class="kpi"><div class="etiqueta">Venta del período</div><div class="valor">{{ kpi.venta | pesos }}</div>
+        <div class="detalle">{{ kpi.venta_u | unidades }} unidades</div></div>
+    <div class="kpi alerta"><div class="etiqueta">% Merma s/ventas</div><div class="valor">{{ kpi.pct | pct }}</div></div>
+</div>
+
+{% if composicion %}
+<div class="seccion">
+    <h2>Composición de la merma por categoría</h2>
+    <table>
+        <thead><tr><th>Categoría</th><th class="num">Merma $</th><th class="num">Unidades</th>
+            <th class="num">% del total</th><th class="barra-celda"></th></tr></thead>
+        <tbody>
+        {% for c in composicion %}
+        <tr>
+            <td>{{ c.nombre }}</td>
+            <td class="num">{{ c.valor | pesos }}</td>
+            <td class="num">{{ c.unidades | unidades }}</td>
+            <td class="num">{{ c.share | pct }}</td>
+            <td class="barra-celda"><div class="barra" style="width: {{ c.share_w }}%"></div></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if sucursales %}
+<div class="seccion">
+    <h2>Comparativa por sucursal</h2>
+    <table>
+        <thead><tr><th>Sucursal</th><th class="num">SKUs c/merma</th><th class="num">Merma $</th>
+            <th class="num">Merma u.</th><th class="num">Venta $</th><th class="num">% Merma</th>
+            <th class="barra-celda"></th></tr></thead>
+        <tbody>
+        {% for s in sucursales %}
+        <tr>
+            <td>{{ s.nombre }}</td>
+            <td class="num">{{ s.skus_con_merma | unidades }}</td>
+            <td class="num rojo">{{ s.merma | pesos }}</td>
+            <td class="num">{{ s.merma_u | unidades }}</td>
+            <td class="num">{{ s.venta | pesos }}</td>
+            <td class="num">{{ s.pct | pct }}</td>
+            <td class="barra-celda"><div class="barra" style="width: {{ s.merma_w }}%"></div></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr><td>Total</td><td class="num">{{ suc_total.skus_con_merma | unidades }}</td>
+            <td class="num rojo">{{ suc_total.merma | pesos }}</td><td class="num">{{ suc_total.merma_u | unidades }}</td>
+            <td class="num">{{ suc_total.venta | pesos }}</td><td class="num">{{ suc_total.pct | pct }}</td><td></td></tr></tfoot>
+    </table>
+</div>
+{% endif %}
+
+{% if rubros %}
+<div class="seccion">
+    <h2>Merma por {{ nivel_rubro }}</h2>
+    <table>
+        <thead><tr><th>{{ nivel_rubro | title }}</th><th class="num">Merma $</th><th class="num">Venta $</th>
+            <th class="num">% Merma</th><th class="num">% del total</th><th class="barra-celda"></th></tr></thead>
+        <tbody>
+        {% for r in rubros %}
+        <tr>
+            <td>{{ r.nombre }}</td>
+            <td class="num rojo">{{ r.merma | pesos }}</td>
+            <td class="num">{{ r.venta | pesos }}</td>
+            <td class="num">{{ r.pct | pct }}</td>
+            <td class="num">{{ r.share | pct }}</td>
+            <td class="barra-celda"><div class="barra" style="width: {{ r.share_w }}%"></div></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if top_skus %}
+<div class="seccion">
+    <h2>Top {{ top_skus | length }} SKUs por merma</h2>
+    <table>
+        <thead><tr><th>Código</th><th>Descripción</th><th>Rubro</th><th class="num">Merma $</th>
+            <th class="num">Merma u.</th><th class="num">Venta $</th><th class="num">% Merma</th></tr></thead>
+        <tbody>
+        {% for s in top_skus %}
+        <tr>
+            <td>{{ s.codigo }}</td>
+            <td>{{ s.descripcion }}</td>
+            <td>{{ s.rubro }}</td>
+            <td class="num rojo">{{ s.merma | pesos }}</td>
+            <td class="num">{{ s.merma_u | unidades }}</td>
+            <td class="num">{{ s.venta | pesos }}</td>
+            <td class="num">{{ s.pct | pct }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<footer>
+    <span>MermaIQ — análisis de merma de inventario</span>
+    <span>Generado el {{ meta.generado }}</span>
+</footer>
+
+</body>
+</html>

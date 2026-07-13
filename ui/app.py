@@ -24,8 +24,14 @@ import sys
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
+import io
+
 from setup_db import get_db_path, get_connection
-from core.merma import calcular_merma, listar_categorias, listar_fechas_valorizacion
+from core.merma import (
+    calcular_merma, merma_por_sucursal,
+    listar_categorias, listar_fechas_valorizacion,
+)
+from core.reporte import generar_reporte
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +216,103 @@ def merma_por_categoria(df: pd.DataFrame, cat: str) -> pd.Series:
     if cat not in df.columns:
         return pd.Series(0.0, index=df.index)
     return (-df[cat]).clip(lower=0)
+
+
+def a_excel(df: pd.DataFrame) -> bytes:
+    """Serializa un DataFrame a .xlsx en memoria."""
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False, engine="openpyxl")
+    return buf.getvalue()
+
+
+def botones_descarga(df: pd.DataFrame, nombre: str, key: str) -> None:
+    """Botones Excel + CSV para descargar un listado."""
+    c1, c2, _ = st.columns([1, 1, 4])
+    c1.download_button(
+        "⬇ Excel", a_excel(df), f"{nombre}.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=f"{key}_xlsx",
+    )
+    c2.download_button(
+        "⬇ CSV", df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+        f"{nombre}.csv", "text/csv", key=f"{key}_csv",
+    )
+
+
+@st.cache_data(show_spinner=False)
+def comparativa_cacheada(proyecto: str, fecha_desde: str, fecha_hasta: str,
+                         modo_valorizacion: str, fecha_valorizacion,
+                         codigos: tuple | None) -> pd.DataFrame:
+    return merma_por_sucursal(
+        proyecto, fecha_desde, fecha_hasta,
+        modo_valorizacion=modo_valorizacion,
+        fecha_valorizacion=fecha_valorizacion,
+        codigos=list(codigos) if codigos is not None else None,
+    )
+
+
+def render_comparativa(df_suc: pd.DataFrame, merma_cats: list[str], key: str) -> None:
+    """Tabla + gráfico + descarga de la comparativa por sucursal."""
+    if df_suc.empty:
+        st.info("Sin datos para la comparativa.")
+        return
+
+    df_suc = df_suc.copy()
+    df_suc["sucursal"] = df_suc["codigodepo"] + " — " + df_suc["nombre"].fillna("")
+
+    # Tabla
+    cols = ["codigodepo", "nombre", "skus", "skus_con_merma"]
+    headers = ["Código", "Sucursal", "SKUs", "SKUs c/merma"]
+    formato = {}
+    for c in merma_cats:
+        if c in df_suc.columns:
+            cols.append(c); headers.append(f"{c} $"); formato[c] = formatear_pesos
+            cu = f"{c} (u)"
+            cols.append(cu); headers.append(f"{c} u."); formato[cu] = formatear_unidades
+    for c, h, f in [
+        ("merma_total_valorizada", "Merma Total $", formatear_pesos),
+        ("merma_total_unidades",   "Merma Total u.", formatear_unidades),
+        ("venta_neta",             "Venta $",        formatear_pesos),
+        ("pct_merma_sobre_ventas", "% Merma",        formatear_pct),
+    ]:
+        cols.append(c); headers.append(h); formato[c] = f
+
+    df_display = df_suc[cols].copy()
+    for c, f in formato.items():
+        df_display[c] = df_display[c].apply(f)
+    df_display.columns = headers
+    st.dataframe(df_display, width="stretch", hide_index=True)
+
+    botones_descarga(df_suc[cols], "comparativa_sucursales", key)
+
+    # Gráfico: merma apilada por categoría + % en eje secundario
+    fig = go.Figure()
+    for i, cat in enumerate(merma_cats):
+        cu = f"{cat} (u)"
+        if cat in df_suc.columns:
+            fig.add_bar(
+                name=cat, x=df_suc["sucursal"],
+                y=(-df_suc[cat]).clip(lower=0),
+                marker_color=PALETA[i % len(PALETA)],
+            )
+    fig.add_scatter(
+        name="% Merma s/venta", x=df_suc["sucursal"],
+        y=df_suc["pct_merma_sobre_ventas"],
+        mode="lines+markers", line=dict(color="#64ffda", width=2),
+        marker=dict(size=7), yaxis="y2",
+    )
+    fig.update_layout(
+        barmode="stack", height=430,
+        plot_bgcolor="#0f1117", paper_bgcolor="#0f1117",
+        font=dict(color="#ccd6f6", family="IBM Plex Mono"),
+        xaxis=dict(tickangle=-30, gridcolor="#1e2130"),
+        yaxis=dict(title="Merma $", gridcolor="#1e2130"),
+        yaxis2=dict(title="% Merma", overlaying="y", side="right",
+                    gridcolor="#1e2130", ticksuffix="%"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(b=120),
+    )
+    st.plotly_chart(fig, width="stretch")
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +582,12 @@ elif pagina == "Análisis":
                     st.session_state["df_merma"] = df
                     st.session_state["cats_merma"] = df.attrs.get("categorias", [])
                     st.session_state["fval_merma"] = df.attrs.get("fecha_valorizacion")
+                    st.session_state["ctrl_merma"] = ctrl
+                    st.session_state["suc_merma"] = suc_sel
+                    st.session_state["suc_merma_label"] = (
+                        "Todas las sucursales" if suc_sel == TODAS
+                        else f"{suc_sel} — {suc_label.get(suc_sel, '')}".strip(" —")
+                    )
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -573,6 +682,7 @@ elif pagina == "Análisis":
                 df_display[c] = df_display[c].apply(f)
             df_display.columns = headers
             st.dataframe(df_display, width="stretch", hide_index=True)
+            botones_descarga(df[cols_base + cols_mostrar], "detalle_merma_sku", "det")
 
             # --- Dashboard ------------------------------------------------------
             merma_cats = [c for c in categorias_merma(proyecto) if c in df.columns]
@@ -653,6 +763,55 @@ elif pagina == "Análisis":
                 )
                 st.plotly_chart(fig, width="stretch")
 
+            # --- Comparativa por sucursal (solo con "Todas") --------------------
+            ctrl_calc = st.session_state.get("ctrl_merma")
+            df_suc = None
+            if st.session_state.get("suc_merma") == TODAS and ctrl_calc:
+                st.markdown("---")
+                st.markdown("### Comparativa por sucursal")
+                filtrado = len(df) != len(df_full)
+                codigos_t = tuple(sorted(df["codigo"])) if filtrado else None
+                with st.spinner("Armando comparativa..."):
+                    df_suc = comparativa_cacheada(
+                        proyecto,
+                        ctrl_calc["fecha_desde"], ctrl_calc["fecha_hasta"],
+                        ctrl_calc["modo_valorizacion"], ctrl_calc["fecha_valorizacion"],
+                        codigos_t,
+                    )
+                if filtrado:
+                    st.caption("La comparativa respeta los filtros aplicados arriba.")
+                render_comparativa(df_suc, merma_cats, "comp")
+
+            # --- Reporte imprimible ----------------------------------------------
+            st.markdown("---")
+            st.markdown("### Reporte imprimible")
+            filtros_txt = []
+            if f_gsr:
+                filtros_txt.append("GSR: " + ", ".join(f_gsr))
+            if f_rubro:
+                filtros_txt.append("Rubro: " + ", ".join(f_rubro))
+            if f_marca:
+                filtros_txt.append("Marca: " + ", ".join(f_marca))
+            if f_texto:
+                filtros_txt.append(f"Búsqueda: '{f_texto}'")
+            meta = {
+                "proyecto":           proyecto,
+                "sucursal":           st.session_state.get("suc_merma_label", ""),
+                "fecha_desde":        ctrl_calc["fecha_desde"] if ctrl_calc else "",
+                "fecha_hasta":        ctrl_calc["fecha_hasta"] if ctrl_calc else "",
+                "modo":               ctrl_calc["modo_valorizacion"] if ctrl_calc else "costo",
+                "fecha_valorizacion": fval or "—",
+                "filtros":            " · ".join(filtros_txt),
+            }
+            html_reporte = generar_reporte(df, meta, merma_cats, df_sucursales=df_suc)
+            st.download_button(
+                "🖨 Descargar reporte (HTML imprimible)",
+                html_reporte.encode("utf-8"),
+                f"reporte_merma_{meta['fecha_desde']}_{meta['fecha_hasta']}.html",
+                "text/html", key="dl_reporte",
+            )
+            st.caption("Abrilo en el navegador e imprimí con Ctrl+P (o guardá como PDF).")
+
 
 # ---------------------------------------------------------------------------
 # Página: SUCURSALES
@@ -669,79 +828,37 @@ elif pagina == "Sucursales":
         ctrl = controles_periodo(proyecto, "sucursales")
 
         if ctrl and st.button("Calcular todas las sucursales"):
-            merma_cats = categorias_merma(proyecto)
-            resultados = []
-            progress = st.progress(0)
-            sucs = sucursales["codigodepo"].tolist()
-
-            for i, suc in enumerate(sucs):
+            with st.spinner("Calculando..."):
                 try:
-                    dfx = calcular_merma(proyecto, suc, **ctrl)
-                    fila = {
-                        "codigodepo": suc,
-                        "skus":       len(dfx),
-                        "merma_total": dfx["merma_total_valorizada"].sum(),
-                        "venta_neta":  dfx["venta_neta"].sum(),
-                    }
-                    for cat in merma_cats:
-                        fila[cat] = merma_por_categoria(dfx, cat).sum()
-                    resultados.append(fila)
+                    df_res = merma_por_sucursal(proyecto, **ctrl)
+                    st.session_state["df_sucursales"] = df_res
+                    st.session_state["cats_merma_suc"] = [
+                        c for c in categorias_merma(proyecto)
+                        if c in df_res.columns
+                    ]
+                    st.session_state["fval_suc"] = df_res.attrs.get("fecha_valorizacion")
                 except Exception as e:
-                    st.warning(f"Sucursal {suc}: {e}")
-                progress.progress((i + 1) / len(sucs))
-
-            if resultados:
-                df_res = pd.DataFrame(resultados)
-                df_res = df_res.merge(sucursales, on="codigodepo", how="left")
-                st.session_state["df_sucursales"] = df_res
-                st.session_state["cats_merma_suc"] = merma_cats
+                    st.error(f"Error: {e}")
 
         if "df_sucursales" in st.session_state:
             df_res = st.session_state["df_sucursales"]
             merma_cats = st.session_state.get("cats_merma_suc", [])
 
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Merma total", formatear_pesos(df_res["merma_total"].sum()))
-            col2.metric("Venta total", formatear_pesos(df_res["venta_neta"].sum()))
+            merma_t = df_res["merma_total_valorizada"].sum()
             venta_t = df_res["venta_neta"].sum()
-            merma_t = df_res["merma_total"].sum()
-            col3.metric("% Merma global", formatear_pct((merma_t / venta_t * 100) if venta_t > 0 else None))
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Sucursales", len(df_res))
+            col2.metric("Merma total", formatear_pesos(merma_t),
+                        delta=f"{df_res['merma_total_unidades'].sum():,.0f} unidades",
+                        delta_color="off")
+            col3.metric("Venta total", formatear_pesos(venta_t))
+            col4.metric("% Merma global",
+                        formatear_pct((merma_t / venta_t * 100) if venta_t > 0 else None))
+            fval_suc = st.session_state.get("fval_suc")
+            if fval_suc:
+                st.caption(f"Valorizado con snapshot de stock del **{fval_suc}**")
 
-            # Tabla
-            df_res = df_res.copy()
-            df_res["pct_merma"] = (df_res["merma_total"] / df_res["venta_neta"] * 100).where(
-                df_res["venta_neta"] > 0
-            )
-            cols = ["codigodepo", "nombre", "skus"] + merma_cats + ["merma_total", "venta_neta", "pct_merma"]
-            df_display = df_res[cols].copy()
-            for c in merma_cats + ["merma_total", "venta_neta"]:
-                df_display[c] = df_display[c].apply(formatear_pesos)
-            df_display["pct_merma"] = df_display["pct_merma"].apply(formatear_pct)
-            df_display.columns = (
-                ["Código", "Sucursal", "SKUs"] + [f"{c} $" for c in merma_cats] +
-                ["Merma Total", "Venta", "% Merma"]
-            )
-            st.dataframe(df_display, width="stretch", hide_index=True)
-
-            # Gráfico comparativo
-            if merma_cats:
-                etiquetas = df_res["nombre"].fillna(df_res["codigodepo"])
-                fig = go.Figure()
-                for i, cat in enumerate(merma_cats):
-                    fig.add_bar(
-                        name=cat, x=etiquetas, y=df_res[cat],
-                        marker_color=PALETA[i % len(PALETA)],
-                    )
-                fig.update_layout(
-                    barmode="stack",
-                    plot_bgcolor="#0f1117", paper_bgcolor="#0f1117",
-                    font=dict(color="#ccd6f6", family="IBM Plex Mono"),
-                    xaxis=dict(gridcolor="#1e2130"),
-                    yaxis=dict(gridcolor="#1e2130"),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                    height=400,
-                )
-                st.plotly_chart(fig, width="stretch")
+            render_comparativa(df_res, merma_cats, "suc")
 
 
 # ---------------------------------------------------------------------------
