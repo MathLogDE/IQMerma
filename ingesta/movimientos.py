@@ -6,12 +6,17 @@ Responsabilidades:
   2. Normalizar y validar los datos
   3. Detectar el período cubierto por el archivo
   4. Verificar duplicados contra periodos_ingesta
-  5. Insertar en DuckDB (movimientos + costo_sku_historial)
+  5. Insertar en DuckDB (movimientos)
   6. Registrar la ingesta en periodos_ingesta
 
 Uso desde Python:
-    from ingesta.movimientos import ingestar_movimientos
-    resultado = ingestar_movimientos("archivo.xlsx", proyecto="cliente_alfa")
+    from ingesta.movimientos import ingestar_movimientos, ingestar_libro_movimientos
+
+    # Un archivo = un período (una pestaña):
+    ingestar_movimientos("archivo.xlsx", proyecto="cliente_alfa")
+
+    # Un archivo con varias pestañas (una por mes) — una ingesta por hoja:
+    ingestar_libro_movimientos("2025.xlsx", proyecto="cliente_alfa")
 """
 
 import duckdb
@@ -64,25 +69,30 @@ def _get_connection(proyecto: str) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(db_path))
 
 
-def _leer_excel(filepath: str | Path) -> pd.DataFrame:
+def _leer_excel(source, sheet=0) -> pd.DataFrame:
     """
     Lee el Excel del ERP y retorna un DataFrame crudo.
+
+    Args:
+        source: ruta al archivo, o un pd.ExcelFile ya abierto (para carga
+                multi-pestaña eficiente — no reabre el libro por cada hoja).
+        sheet:  índice (0 por defecto) o nombre de la pestaña a leer.
+
     Maneja:
       - Archivos con filas vacías al inicio
       - COSTO con coma decimal (formato argentino)
       - Columnas extra que el ERP pueda agregar en el futuro
     """
-    filepath = Path(filepath)
-    if not filepath.exists():
-        raise FileNotFoundError(f"Archivo no encontrado: {filepath}")
-
-    # Intentar leer — openpyxl para .xlsx, xlrd para .xls legacy
     try:
-        df = pd.read_excel(
-            filepath,
-            dtype=str,          # leer todo como string para normalizar después
-            engine="openpyxl",
-        )
+        if isinstance(source, pd.ExcelFile):
+            df = pd.read_excel(source, dtype=str, sheet_name=sheet)
+        else:
+            filepath = Path(source)
+            if not filepath.exists():
+                raise FileNotFoundError(f"Archivo no encontrado: {filepath}")
+            df = pd.read_excel(filepath, dtype=str, engine="openpyxl", sheet_name=sheet)
+    except FileNotFoundError:
+        raise
     except Exception as e:
         raise ValueError(f"No se pudo leer el archivo: {e}")
 
@@ -185,36 +195,6 @@ def _verificar_duplicado(conn: duckdb.DuckDBPyConnection, periodo: str) -> bool:
     return result[0] > 0
 
 
-def _actualizar_costo_historial(
-    conn: duckdb.DuckDBPyConnection,
-    df: pd.DataFrame
-) -> int:
-    """
-    Extrae remitos RE/RI con costo > 0 y los inserta en costo_sku_historial.
-    Retorna cantidad de registros insertados.
-    """
-    remitos = df[
-        (df["tipomov"] == "REM") &
-        (df["tipo"].isin(["RE", "RI"])) &
-        (df["costo"].notna()) &
-        (df["costo"] > 0)
-    ][["codigo", "codigodepo", "fecha", "costo", "numero"]].copy()
-
-    if remitos.empty:
-        return 0
-
-    remitos = remitos.rename(columns={"numero": "numero_remito"})
-    remitos["fecha_ingesta"] = datetime.now(timezone.utc)
-
-    conn.execute("""
-        INSERT INTO costo_sku_historial (codigo, codigodepo, fecha, costo, numero_remito, fecha_ingesta)
-        SELECT codigo, codigodepo, fecha, costo, numero_remito, fecha_ingesta
-        FROM remitos
-    """)
-
-    return len(remitos)
-
-
 def _insertar_movimientos(
     conn: duckdb.DuckDBPyConnection,
     df: pd.DataFrame,
@@ -278,6 +258,8 @@ def ingestar_movimientos(
     filepath: str | Path,
     proyecto: str,
     forzar: bool = False,
+    sheet=0,
+    libro: "pd.ExcelFile | None" = None,
 ) -> dict:
     """
     Carga una planilla de movimientos del ERP en DuckDB.
@@ -286,12 +268,16 @@ def ingestar_movimientos(
         filepath:  Ruta al archivo .xlsx del ERP
         proyecto:  Nombre del proyecto (carpeta bajo projects/)
         forzar:    Si True, reemplaza el período aunque ya exista
+        sheet:     Pestaña a leer (índice o nombre). Default: la primera.
+        libro:     pd.ExcelFile ya abierto (uso interno de
+                   ingestar_libro_movimientos; evita reabrir por hoja).
 
     Returns:
-        dict con keys: periodo, registros, remitos_historial, advertencias
+        dict con keys: periodo, registros, sucursales, tipomov, advertencias
     """
     filepath = Path(filepath)
-    archivo_origen = filepath.name
+    # archivo_origen incluye la pestaña cuando no es la primera (para auditoría)
+    archivo_origen = filepath.name if sheet in (0, None) else f"{filepath.name}#{sheet}"
     advertencias = []
 
     print(f"\n{'='*55}")
@@ -301,7 +287,7 @@ def ingestar_movimientos(
 
     # 1. Leer
     print("  Leyendo archivo...")
-    df_crudo = _leer_excel(filepath)
+    df_crudo = _leer_excel(libro if libro is not None else filepath, sheet=sheet)
     print(f"  Filas leídas: {len(df_crudo)}")
 
     # 2. Validar columnas
@@ -351,12 +337,7 @@ def ingestar_movimientos(
     registros = _insertar_movimientos(conn, df, periodo, archivo_origen)
     print(f"  ✓ {registros} registros insertados")
 
-    # 8. Actualizar costo_sku_historial
-    print("  Actualizando historial de costos (remitos RE/RI)...")
-    remitos_n = _actualizar_costo_historial(conn, df)
-    print(f"  ✓ {remitos_n} costos registrados en historial")
-
-    # 9. Registrar ingesta
+    # 8. Registrar ingesta
     _registrar_ingesta(conn, periodo, archivo_origen, registros)
     conn.close()
 
@@ -366,8 +347,73 @@ def ingestar_movimientos(
     return {
         "periodo": periodo,
         "registros": registros,
-        "remitos_historial": remitos_n,
         "sucursales": sucursales,
         "tipomov": tipomov_counts,
         "advertencias": advertencias,
+    }
+
+
+def ingestar_libro_movimientos(
+    filepath: str | Path,
+    proyecto: str,
+    forzar: bool = False,
+) -> dict:
+    """
+    Carga un Excel de movimientos con VARIAS pestañas (una por período/mes),
+    haciendo una ingesta independiente por cada hoja.
+
+    Cada pestaña se detecta y deduplica por su propio período — respeta el
+    modelo mensual. El libro se abre una sola vez (eficiente para archivos
+    pesados). Una pestaña que falle (ej: período ya cargado sin forzar, o una
+    hoja que no es de datos) no corta la carga de las demás: se reporta.
+
+    Args:
+        filepath:  Ruta al .xlsx con múltiples pestañas
+        proyecto:  Nombre del proyecto
+        forzar:    Si True, reemplaza los períodos que ya existan
+
+    Returns:
+        dict con keys: archivo, hojas, cargadas, registros_total, detalle, errores
+    """
+    filepath = Path(filepath)
+    archivo_origen = filepath.name
+
+    print(f"\n{'#'*55}")
+    print(f"  Ingesta de LIBRO de movimientos: {archivo_origen}")
+    print(f"  Proyecto: {proyecto}")
+    print(f"{'#'*55}")
+
+    libro = pd.ExcelFile(filepath, engine="openpyxl")
+    hojas = list(libro.sheet_names)
+    print(f"  Pestañas encontradas ({len(hojas)}): {hojas}")
+
+    resultados, errores = [], []
+    try:
+        for hoja in hojas:
+            try:
+                r = ingestar_movimientos(
+                    filepath, proyecto, forzar=forzar, sheet=hoja, libro=libro
+                )
+                resultados.append({"hoja": hoja, **r})
+            except Exception as e:
+                print(f"  [error] pestaña '{hoja}': {e}")
+                errores.append({"hoja": hoja, "error": str(e)})
+    finally:
+        libro.close()
+
+    total = sum(r["registros"] for r in resultados)
+    print(f"\n{'#'*55}")
+    print(f"  Libro completo: {len(resultados)}/{len(hojas)} pestañas OK — "
+          f"{total} movimientos")
+    if errores:
+        print(f"  Pestañas con error: {[e['hoja'] for e in errores]}")
+    print(f"{'#'*55}\n")
+
+    return {
+        "archivo": archivo_origen,
+        "hojas": len(hojas),
+        "cargadas": len(resultados),
+        "registros_total": total,
+        "detalle": resultados,
+        "errores": errores,
     }

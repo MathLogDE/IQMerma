@@ -1,44 +1,52 @@
 """
-core/merma.py — Motor de cálculo de merma
+core/merma.py — Motor de análisis de merma (v2: por selección de período)
 
-Tres componentes de merma calculados por separado:
+Para una sucursal (o todas) y un rango de fechas, calcula por SKU la suma de
+cada categoría de movimiento, en unidades y valorizada. Las categorías agrupan
+subtipos del ERP (`tipo`) según la tabla configurable `tipos_categoria`.
 
-  - merma_inv:  diferencia del conteo físico (stock_sistema vs stock_real)
-  - merma_rem:  suma de remitos del período (todos los subtipos: RI, RE, RDC, MD, etc.)
-  - merma_cs:   suma de ajustes CS del período
+Modelo (decisiones cerradas en MIGRACION_V2.md):
+  - Fuente única: `movimientos` + `stock_sucursal` (+ catálogos).
+  - Universo de SKUs: los que tengan algún movimiento en el rango/selección.
+  - Por SKU y categoría: SUM(diferencia) (neto con signo), en unidades y
+    valorizado.
+  - Valorización: SIEMPRE desde `stock_sucursal`. El costo/lista_1 es global
+    por SKU (una sola columna en el ERP), así que no se filtra por sucursal.
+    `fecha_valorizacion` elige el snapshot (el más reciente <= esa fecha);
+    si no se pasa, se usa el último snapshot disponible (valor actual).
+  - Merma (numerador): parte negativa de las categorías marcadas es_merma.
+  - Venta (denominador): unidades netas de las categorías marcadas es_venta
+    (la salida, en positivo), valorizadas desde el stock.
+  - % merma = merma_total_valorizada / venta_neta * 100.
 
-Cada componente se valoriza al costo del movimiento/conteo.
-Fallback de costo: movimiento/conteo → costo_sku_historial → None
-
-Dos modos de ventana temporal:
-  - conteo_anterior: desde el conteo anterior de ese SKU (fallback: 1 año)
-  - periodo_fijo:    N días hacia atrás desde la fecha del conteo
-
-Retorna DataFrame a nivel SKU. La agregación se hace en capas superiores.
+Retorna un DataFrame ancho: una fila por SKU con atributos (rubro, marca,
+super rubro, gran super rubro), una columna $ por categoría (neto con signo) y
+su gemela en unidades (`<cat> (u)`), más totales y %.
+  - df.attrs["categorias"]         → columnas-categoría ($) en orden
+  - df.attrs["fecha_valorizacion"] → snapshot efectivamente usado
 
 Uso:
     from core.merma import calcular_merma
 
     df = calcular_merma(
         proyecto="cliente_alfa",
-        codigodepo="002",
-        fecha_conteo="2026-03-31",
-        modo="conteo_anterior",   # o "periodo_fijo"
-        dias=90,                  # solo para modo periodo_fijo
+        codigodepo="002",            # o None = todas las sucursales
+        fecha_desde="2026-01-01",
+        fecha_hasta="2026-03-31",
+        modo_valorizacion="costo",   # o "lista_1"
+        fecha_valorizacion=None,     # o "YYYY-MM-DD" (snapshot a usar)
     )
 """
 
 import duckdb
 import pandas as pd
-from pathlib import Path
-from datetime import date, timedelta
 
 
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
 
-FALLBACK_DIAS = 365
+MODOS_VALORIZACION = ("costo", "lista_1")
 
 
 # ---------------------------------------------------------------------------
@@ -56,125 +64,152 @@ def _get_connection(proyecto: str) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(db_path))
 
 
-def _obtener_conteo(
-    conn: duckdb.DuckDBPyConnection,
-    codigodepo: str,
-    fecha_conteo: str,
-) -> pd.DataFrame:
-    df = conn.execute("""
-        SELECT codigo, descripcion, stock_sistema, stock_real,
-               diferencia, costo_unitario
-        FROM conteos
-        WHERE codigodepo = ? AND fecha_conteo = ?
-    """, [codigodepo, fecha_conteo]).df()
+def listar_categorias(proyecto: str) -> list[str]:
+    """Categorías ordenadas según `tipos_categoria` (para la UI)."""
+    conn = _get_connection(proyecto)
+    try:
+        rows = conn.execute("""
+            SELECT categoria
+            FROM tipos_categoria
+            GROUP BY categoria
+            ORDER BY MIN(orden), categoria
+        """).fetchall()
+    finally:
+        conn.close()
+    return [r[0] for r in rows]
 
-    if df.empty:
-        raise ValueError(
-            f"No existe conteo para sucursal '{codigodepo}' en fecha '{fecha_conteo}'. "
-            f"Ingresá primero el conteo con ingestar_conteo()."
+
+def listar_fechas_valorizacion(proyecto: str) -> list[str]:
+    """Fechas de snapshot de stock disponibles, de la más reciente a la más vieja."""
+    conn = _get_connection(proyecto)
+    try:
+        rows = conn.execute("""
+            SELECT DISTINCT fecha_snapshot
+            FROM stock_sucursal
+            ORDER BY fecha_snapshot DESC
+        """).fetchall()
+    finally:
+        conn.close()
+    return [str(r[0]) for r in rows]
+
+
+def _mapa_estructura(df_est: pd.DataFrame) -> pd.DataFrame:
+    """
+    Lookup de estructura indexable por código de rubro O por nombre
+    (articulos.rubro puede traer cualquiera de los dos).
+    """
+    registros = []
+    for _, r in df_est.iterrows():
+        for clave in (r["rubro_cod"], r["rubro"]):
+            if pd.notna(clave):
+                registros.append({
+                    "_clave": str(clave).strip(),
+                    "rubro_desc": r["rubro"],
+                    "super_rubro": r["super_rubro"],
+                    "gran_super_rubro": r["gran_super_rubro"],
+                })
+    if not registros:
+        return pd.DataFrame(columns=["_clave", "rubro_desc", "super_rubro", "gran_super_rubro"])
+    return pd.DataFrame(registros).drop_duplicates("_clave")
+
+
+# ---------------------------------------------------------------------------
+# Ensamblado (pandas)
+# ---------------------------------------------------------------------------
+
+def _ensamblar(df_comp, df_val, df_art, df_est, cats_orden,
+               modo, desde, hasta) -> pd.DataFrame:
+    unit_col = "costo" if modo == "costo" else "lista_1"
+    val = (df_val.set_index("codigo")[unit_col]
+           if not df_val.empty else pd.Series(dtype="float64"))
+
+    universo = sorted(set(df_comp["codigo"]))
+
+    # --- pivots por categoría: unidades y valorizado -------------------------
+    if not df_comp.empty:
+        df_comp = df_comp.copy()
+        df_comp["unit"] = df_comp["codigo"].map(val)
+        df_comp["neto_valorizado"] = df_comp["neto_unidades"] * df_comp["unit"]
+
+        # contribución a merma ($ y unidades): parte negativa de cats es_merma
+        df_comp["merma_contrib"] = 0.0
+        mask = df_comp["es_merma"] & (df_comp["neto_valorizado"] < 0)
+        df_comp.loc[mask, "merma_contrib"] = -df_comp.loc[mask, "neto_valorizado"]
+
+        df_comp["merma_contrib_u"] = 0.0
+        mask_u = df_comp["es_merma"] & (df_comp["neto_unidades"] < 0)
+        df_comp.loc[mask_u, "merma_contrib_u"] = -df_comp.loc[mask_u, "neto_unidades"]
+
+        pivot_val = df_comp.pivot_table(
+            index="codigo", columns="categoria",
+            values="neto_valorizado", aggfunc="sum",
         )
-    return df
-
-
-def _obtener_fecha_conteo_anterior(
-    conn: duckdb.DuckDBPyConnection,
-    codigodepo: str,
-    fecha_conteo: str,
-    codigo: str,
-) -> date | None:
-    result = conn.execute("""
-        SELECT MAX(fecha_conteo)
-        FROM conteos
-        WHERE codigodepo = ? AND codigo = ? AND fecha_conteo < ?
-    """, [codigodepo, codigo, fecha_conteo]).fetchone()
-    return result[0] if result and result[0] else None
-
-
-def _obtener_costo_historial(
-    conn: duckdb.DuckDBPyConnection,
-    codigodepo: str,
-    codigo: str,
-    fecha_hasta: str,
-) -> float | None:
-    """Costo más reciente del SKU en remitos, anterior o igual a fecha_hasta."""
-    result = conn.execute("""
-        SELECT costo
-        FROM costo_sku_historial
-        WHERE codigodepo = ? AND codigo = ? AND fecha <= ?
-        ORDER BY fecha DESC
-        LIMIT 1
-    """, [codigodepo, codigo, fecha_hasta]).fetchone()
-    return float(result[0]) if result else None
-
-
-def _resolver_costo(
-    costo_directo,
-    conn: duckdb.DuckDBPyConnection,
-    codigodepo: str,
-    codigo: str,
-    fecha_hasta: str,
-) -> tuple[float | None, str]:
-    """
-    Resuelve el costo a usar y su fuente.
-    Retorna (costo, fuente) donde fuente es:
-      'directo', 'historial_remitos', o 'sin_costo'
-    """
-    if costo_directo and not pd.isna(costo_directo) and float(costo_directo) > 0:
-        return float(costo_directo), "directo"
-
-    costo_hist = _obtener_costo_historial(conn, codigodepo, codigo, fecha_hasta)
-    if costo_hist is not None:
-        return costo_hist, "historial_remitos"
-
-    return None, "sin_costo"
-
-
-def _obtener_movimientos_periodo(
-    conn: duckdb.DuckDBPyConnection,
-    codigodepo: str,
-    fecha_desde: str,
-    fecha_hasta: str,
-    tipomov: str,
-    tipo: str | None = None,
-) -> pd.DataFrame:
-    """
-    Retorna movimientos del período filtrados por tipomov y opcionalmente tipo.
-    Columnas: codigo, diferencia, costo (por fila individual — se agrega afuera)
-    """
-    if tipo:
-        return conn.execute("""
-            SELECT codigo, diferencia, costo
-            FROM movimientos
-            WHERE codigodepo = ?
-              AND fecha >= ? AND fecha <= ?
-              AND tipomov = ?
-              AND tipo = ?
-        """, [codigodepo, fecha_desde, fecha_hasta, tipomov, tipo]).df()
+        pivot_uni = df_comp.pivot_table(
+            index="codigo", columns="categoria",
+            values="neto_unidades", aggfunc="sum",
+        )
+        merma_total   = df_comp.groupby("codigo")["merma_contrib"].sum()
+        merma_total_u = df_comp.groupby("codigo")["merma_contrib_u"].sum()
+        # unidades vendidas = -(neto de categorías es_venta): la venta es salida
+        vs = df_comp[df_comp["es_venta"]].groupby("codigo")["neto_unidades"].sum()
     else:
-        return conn.execute("""
-            SELECT codigo, diferencia, costo
-            FROM movimientos
-            WHERE codigodepo = ?
-              AND fecha >= ? AND fecha <= ?
-              AND tipomov = ?
-        """, [codigodepo, fecha_desde, fecha_hasta, tipomov]).df()
+        pivot_val = pd.DataFrame()
+        pivot_uni = pd.DataFrame()
+        merma_total = merma_total_u = vs = pd.Series(dtype="float64")
 
+    # Columnas-categoría: orden del catálogo + cualquier extra que aparezca
+    cats = list(cats_orden)
+    for c in pivot_val.columns:
+        if c not in cats:
+            cats.append(c)
 
-def _obtener_ventas(
-    conn: duckdb.DuckDBPyConnection,
-    codigodepo: str,
-    fecha_desde: str,
-    fecha_hasta: str,
-) -> pd.DataFrame:
-    return conn.execute("""
-        SELECT codigo,
-               SUM(unidades)   AS unidades_vendidas,
-               SUM(venta_neta) AS venta_neta
-        FROM ventas
-        WHERE codigodepo = ?
-          AND fecha_desde >= ? AND fecha_hasta <= ?
-        GROUP BY codigo
-    """, [codigodepo, fecha_desde, fecha_hasta]).df()
+    res = pd.DataFrame(index=pd.Index(universo, name="codigo"))
+    for c in cats:
+        res[c] = pivot_val[c] if c in pivot_val.columns else 0.0
+        res[f"{c} (u)"] = pivot_uni[c] if c in pivot_uni.columns else 0.0
+    cols_num = cats + [f"{c} (u)" for c in cats]
+    res[cols_num] = res[cols_num].fillna(0.0)
+
+    res["merma_total_valorizada"] = merma_total.reindex(res.index).fillna(0.0)
+    res["merma_total_unidades"]   = merma_total_u.reindex(res.index).fillna(0.0)
+
+    # --- venta (denominador): unidades vendidas × precio de stock -----------
+    res["unidades_vendidas"] = (-vs).reindex(res.index).fillna(0.0)
+    res["venta_neta"] = (res["unidades_vendidas"] * res.index.map(val)).fillna(0.0)
+
+    # --- % merma sobre ventas ------------------------------------------------
+    res["pct_merma_sobre_ventas"] = pd.NA
+    m = res["venta_neta"] > 0
+    res.loc[m, "pct_merma_sobre_ventas"] = (
+        res.loc[m, "merma_total_valorizada"] / res.loc[m, "venta_neta"] * 100
+    ).round(4)
+
+    # --- atributos: descripción, rubro, marca, jerarquía ---------------------
+    res["valor_unitario"] = res.index.map(val)
+    res = res.reset_index().merge(df_art, on="codigo", how="left")
+
+    mapa = _mapa_estructura(df_est)
+    res["_clave"] = res["rubro"].astype("string").str.strip()
+    res = res.merge(mapa, on="_clave", how="left").drop(columns=["_clave"])
+    res["rubro"] = res["rubro_desc"].fillna(res["rubro"])
+    res = res.drop(columns=["rubro_desc"])
+
+    res["modo_valorizacion"] = modo
+    res["fecha_desde"] = pd.to_datetime(desde).date()
+    res["fecha_hasta"] = pd.to_datetime(hasta).date()
+
+    cols = (
+        ["codigo", "descripcion", "rubro", "marca", "super_rubro", "gran_super_rubro"]
+        + [x for c in cats for x in (c, f"{c} (u)")]
+        + ["merma_total_valorizada", "merma_total_unidades",
+           "unidades_vendidas", "venta_neta", "pct_merma_sobre_ventas",
+           "valor_unitario", "modo_valorizacion", "fecha_desde", "fecha_hasta"]
+    )
+    res = (res[cols]
+           .sort_values("merma_total_valorizada", ascending=False)
+           .reset_index(drop=True))
+    res.attrs["categorias"] = cats
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -183,217 +218,116 @@ def _obtener_ventas(
 
 def calcular_merma(
     proyecto: str,
-    codigodepo: str,
-    fecha_conteo: str,
-    modo: str = "conteo_anterior",
-    dias: int = 90,
+    codigodepo: str | None,
+    fecha_desde: str,
+    fecha_hasta: str,
+    modo_valorizacion: str = "costo",
+    fecha_valorizacion: str | None = None,
 ) -> pd.DataFrame:
     """
-    Calcula merma por SKU con tres componentes separados.
+    Calcula merma por SKU para una sucursal (o todas) y un rango de fechas.
 
     Args:
-        proyecto:     Nombre del proyecto
-        codigodepo:   Código de sucursal
-        fecha_conteo: Fecha del conteo (YYYY-MM-DD)
-        modo:         "conteo_anterior" o "periodo_fijo"
-        dias:         Días hacia atrás para modo "periodo_fijo"
+        proyecto:           Nombre del proyecto
+        codigodepo:         Código de sucursal, o None = todas las sucursales
+        fecha_desde:        Inicio del período (YYYY-MM-DD), inclusive
+        fecha_hasta:        Fin del período (YYYY-MM-DD), inclusive
+        modo_valorizacion:  "costo" (default) o "lista_1"
+        fecha_valorizacion: Fecha del snapshot de stock a usar para valorizar
+                            (se toma el más reciente <= esa fecha). None =
+                            último snapshot disponible (valor actual).
 
     Returns:
-        DataFrame con una fila por SKU. Columnas principales:
-
-        Identificación:
-            codigo, descripcion
-
-        Ventana temporal:
-            fecha_desde, fecha_hasta, dias_ventana, ventana_origen
-
-        Conteo (merma_inv):
-            stock_sistema, stock_real, diferencia_inv,
-            costo_inv, fuente_costo_inv,
-            merma_inv_unidades, merma_inv_valorizada
-
-        Remitos (merma_rem):
-            diferencia_rem,
-            costo_rem, fuente_costo_rem,
-            merma_rem_unidades, merma_rem_valorizada
-
-        Ajustes CS (merma_cs):
-            diferencia_cs,
-            costo_cs, fuente_costo_cs,
-            merma_cs_unidades, merma_cs_valorizada
-
-        Totales:
-            merma_total_unidades, merma_total_valorizada
-
-        Ventas:
-            unidades_vendidas, venta_neta,
-            pct_merma_sobre_ventas
+        DataFrame ancho (una fila por SKU). `df.attrs["categorias"]` lista las
+        columnas-categoría; `df.attrs["fecha_valorizacion"]` es el snapshot usado.
     """
-    if modo not in ("conteo_anterior", "periodo_fijo"):
-        raise ValueError(f"modo debe ser 'conteo_anterior' o 'periodo_fijo', no '{modo}'")
+    if modo_valorizacion not in MODOS_VALORIZACION:
+        raise ValueError(
+            f"modo_valorizacion debe ser uno de {MODOS_VALORIZACION}, no '{modo_valorizacion}'"
+        )
+
+    desde = str(pd.to_datetime(fecha_desde).date())
+    hasta = str(pd.to_datetime(fecha_hasta).date())
+    if desde > hasta:
+        raise ValueError(f"fecha_desde ({desde}) no puede ser posterior a fecha_hasta ({hasta})")
 
     conn = _get_connection(proyecto)
-    fecha_conteo_dt = pd.to_datetime(fecha_conteo).date()
+    try:
+        # Componentes: neto por SKU y categoría (LEFT JOIN para no perder
+        # subtipos sin mapear → caen en '(sin categoría)')
+        filtro_depo = "AND codigodepo = $depo" if codigodepo else ""
+        params = {"desde": desde, "hasta": hasta}
+        if codigodepo:
+            params["depo"] = codigodepo
 
-    # 1. Obtener conteo
-    df_conteo = _obtener_conteo(conn, codigodepo, fecha_conteo)
-
-    # 2. Calcular por SKU
-    registros = []
-
-    for _, row in df_conteo.iterrows():
-        codigo = row["codigo"]
-
-        # --- Ventana temporal ---
-        if modo == "conteo_anterior":
-            fecha_anterior = _obtener_fecha_conteo_anterior(
-                conn, codigodepo, fecha_conteo, codigo
+        df_comp = conn.execute(f"""
+            WITH rango AS (
+                SELECT codigo, tipo, SUM(diferencia) AS neto_unidades
+                FROM movimientos
+                WHERE fecha >= $desde::DATE
+                  AND fecha <= $hasta::DATE
+                  {filtro_depo}
+                GROUP BY codigo, tipo
             )
-            if fecha_anterior:
-                fecha_desde = fecha_anterior
-                ventana_origen = "conteo_anterior"
-            else:
-                fecha_desde = fecha_conteo_dt - timedelta(days=FALLBACK_DIAS)
-                ventana_origen = f"fallback_{FALLBACK_DIAS}d"
+            SELECT r.codigo,
+                   COALESCE(t.categoria, '(sin categoría)') AS categoria,
+                   COALESCE(t.es_merma, FALSE)              AS es_merma,
+                   COALESCE(t.es_venta, FALSE)              AS es_venta,
+                   SUM(r.neto_unidades)                     AS neto_unidades
+            FROM rango r
+            LEFT JOIN tipos_categoria t ON r.tipo = t.tipo
+            GROUP BY 1, 2, 3, 4
+        """, params).df()
+
+        # Valorización: snapshot elegido (o el último disponible). El precio es
+        # global por SKU — no se filtra por sucursal.
+        if fecha_valorizacion:
+            fv = str(pd.to_datetime(fecha_valorizacion).date())
+            df_val = conn.execute("""
+                SELECT codigo, costo, lista_1
+                FROM stock_sucursal
+                WHERE fecha_snapshot <= $fv::DATE
+                QUALIFY row_number() OVER (
+                    PARTITION BY codigo
+                    ORDER BY fecha_snapshot DESC, fecha_ingesta DESC, id DESC
+                ) = 1
+            """, {"fv": fv}).df()
         else:
-            fecha_desde = fecha_conteo_dt - timedelta(days=dias)
-            ventana_origen = f"fijo_{dias}d"
+            df_val = conn.execute("""
+                SELECT codigo, costo, lista_1
+                FROM stock_sucursal
+                QUALIFY row_number() OVER (
+                    PARTITION BY codigo
+                    ORDER BY fecha_snapshot DESC, fecha_ingesta DESC, id DESC
+                ) = 1
+            """).df()
 
-        dias_ventana = (fecha_conteo_dt - fecha_desde).days
-        fecha_desde_str = str(fecha_desde)
+        # Snapshot efectivamente usado (para trazabilidad en la UI)
+        fv_usada = conn.execute(
+            "SELECT MAX(fecha_snapshot) FROM stock_sucursal"
+            + (" WHERE fecha_snapshot <= ?" if fecha_valorizacion else ""),
+            [fv] if fecha_valorizacion else [],
+        ).fetchone()[0]
 
-        # ================================================================
-        # COMPONENTE 1 — INV (conteo físico)
-        # ================================================================
-        diferencia_inv = row["diferencia"]   # stock_real - stock_sistema (negativo = faltante)
-        merma_inv_unidades = abs(diferencia_inv) if diferencia_inv < 0 else 0.0
+        # Atributos de artículos + jerarquía de rubros
+        df_art = conn.execute(
+            "SELECT codigo, descripcion, rubro, marca FROM articulos"
+        ).df()
+        df_est = conn.execute(
+            "SELECT rubro_cod, rubro, super_rubro, gran_super_rubro FROM estructura"
+        ).df()
 
-        costo_inv, fuente_costo_inv = _resolver_costo(
-            row["costo_unitario"], conn, codigodepo, codigo, fecha_conteo
-        )
-        merma_inv_valorizada = (
-            merma_inv_unidades * costo_inv if costo_inv is not None else None
-        )
-
-        # ================================================================
-        # COMPONENTE 2 — REM (todos los remitos del período)
-        # ================================================================
-        df_rem = _obtener_movimientos_periodo(
-            conn, codigodepo, fecha_desde_str, fecha_conteo,
-            tipomov="REM"
-        )
-        df_rem_sku = df_rem[df_rem["codigo"] == codigo]
-
-        diferencia_rem = float(df_rem_sku["diferencia"].sum()) if not df_rem_sku.empty else 0.0
-        merma_rem_unidades = abs(diferencia_rem) if diferencia_rem < 0 else 0.0
-
-        # Costo promedio ponderado de los remitos del SKU en el período
-        costo_rem_directo = None
-        if not df_rem_sku.empty:
-            costos_validos = df_rem_sku["costo"].dropna()
-            costos_validos = costos_validos[costos_validos > 0]
-            if not costos_validos.empty:
-                costo_rem_directo = float(costos_validos.mean())
-
-        costo_rem, fuente_costo_rem = _resolver_costo(
-            costo_rem_directo, conn, codigodepo, codigo, fecha_conteo
-        )
-        merma_rem_valorizada = (
-            merma_rem_unidades * costo_rem if costo_rem is not None else None
-        )
-
-        # ================================================================
-        # COMPONENTE 3 — CS (ajustes del período)
-        # ================================================================
-        df_cs = _obtener_movimientos_periodo(
-            conn, codigodepo, fecha_desde_str, fecha_conteo,
-            tipomov="AJU", tipo="CS"
-        )
-        df_cs_sku = df_cs[df_cs["codigo"] == codigo]
-
-        diferencia_cs = float(df_cs_sku["diferencia"].sum()) if not df_cs_sku.empty else 0.0
-        merma_cs_unidades = abs(diferencia_cs) if diferencia_cs < 0 else 0.0
-
-        costo_cs_directo = None
-        if not df_cs_sku.empty:
-            costos_validos = df_cs_sku["costo"].dropna()
-            costos_validos = costos_validos[costos_validos > 0]
-            if not costos_validos.empty:
-                costo_cs_directo = float(costos_validos.mean())
-
-        costo_cs, fuente_costo_cs = _resolver_costo(
-            costo_cs_directo, conn, codigodepo, codigo, fecha_conteo
-        )
-        merma_cs_valorizada = (
-            merma_cs_unidades * costo_cs if costo_cs is not None else None
-        )
-
-        # ================================================================
-        # TOTALES
-        # ================================================================
-        merma_total_unidades = merma_inv_unidades + merma_rem_unidades + merma_cs_unidades
-
-        componentes_val = [
-            v for v in [merma_inv_valorizada, merma_rem_valorizada, merma_cs_valorizada]
-            if v is not None
+        # Orden de categorías del catálogo
+        cats_orden = [
+            r[0] for r in conn.execute("""
+                SELECT categoria FROM tipos_categoria
+                GROUP BY categoria ORDER BY MIN(orden), categoria
+            """).fetchall()
         ]
-        merma_total_valorizada = sum(componentes_val) if componentes_val else None
+    finally:
+        conn.close()
 
-        registros.append({
-            # Identificación
-            "codigo":                 codigo,
-            "descripcion":            row["descripcion"],
-            # Ventana
-            "fecha_desde":            fecha_desde,
-            "fecha_hasta":            fecha_conteo_dt,
-            "dias_ventana":           dias_ventana,
-            "ventana_origen":         ventana_origen,
-            # INV
-            "stock_sistema":          row["stock_sistema"],
-            "stock_real":             row["stock_real"],
-            "diferencia_inv":         diferencia_inv,
-            "costo_inv":              costo_inv,
-            "fuente_costo_inv":       fuente_costo_inv,
-            "merma_inv_unidades":     merma_inv_unidades,
-            "merma_inv_valorizada":   merma_inv_valorizada,
-            # REM
-            "diferencia_rem":         diferencia_rem,
-            "costo_rem":              costo_rem,
-            "fuente_costo_rem":       fuente_costo_rem,
-            "merma_rem_unidades":     merma_rem_unidades,
-            "merma_rem_valorizada":   merma_rem_valorizada,
-            # CS
-            "diferencia_cs":          diferencia_cs,
-            "costo_cs":               costo_cs,
-            "fuente_costo_cs":        fuente_costo_cs,
-            "merma_cs_unidades":      merma_cs_unidades,
-            "merma_cs_valorizada":    merma_cs_valorizada,
-            # Totales
-            "merma_total_unidades":   merma_total_unidades,
-            "merma_total_valorizada": merma_total_valorizada,
-        })
-
-    df = pd.DataFrame(registros)
-
-    # 3. Ventas del período
-    fecha_desde_min = str(df["fecha_desde"].min())
-    df_ventas = _obtener_ventas(conn, codigodepo, fecha_desde_min, fecha_conteo)
-    conn.close()
-
-    # 4. Join ventas
-    df = df.merge(df_ventas, on="codigo", how="left")
-    df["unidades_vendidas"] = df["unidades_vendidas"].fillna(0)
-    df["venta_neta"] = df["venta_neta"].fillna(0)
-
-    # 5. % merma total sobre ventas
-    df["pct_merma_sobre_ventas"] = None
-    mask = df["merma_total_valorizada"].notna() & (df["venta_neta"] > 0)
-    df.loc[mask, "pct_merma_sobre_ventas"] = (
-        df.loc[mask, "merma_total_valorizada"] / df.loc[mask, "venta_neta"] * 100
-    ).round(4)
-
-    # 6. Ordenar por merma total valorizada descendente
-    df = df.sort_values("merma_total_valorizada", ascending=False, na_position="last")
-    df = df.reset_index(drop=True)
-
+    df = _ensamblar(df_comp, df_val, df_art, df_est, cats_orden,
+                    modo_valorizacion, desde, hasta)
+    df.attrs["fecha_valorizacion"] = str(fv_usada) if fv_usada else None
     return df

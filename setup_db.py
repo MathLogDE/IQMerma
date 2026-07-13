@@ -7,6 +7,15 @@ Uso:
 
 Idempotente: se puede correr múltiples veces sin romper datos existentes.
 Cada proyecto tiene su propio archivo .duckdb en projects/<nombre>/data.duckdb
+
+Cambios v2 (rediseño análisis por selección):
+  - Se elimina la tabla `conteos`: el inventario físico ahora entra como
+    TIPOMOV='INV' dentro de `movimientos`.
+  - Se elimina `costo_sku_historial`: la valorización sale del snapshot de
+    stock (columnas costo / lista_1), con fallback hacia atrás por fecha.
+  - `depositos` gana la columna `es_logistica` para distinguir los centros
+    de distribución (CDC, CR2) de las sucursales de venta. El stock logístico
+    se computa sumando los depósitos marcados; nunca se hardcodea un código.
 """
 
 import argparse
@@ -41,161 +50,125 @@ SCHEMA_SQL = """
 
 -- Secuencias para IDs autoincrementales
 CREATE SEQUENCE IF NOT EXISTS seq_movimientos START 1;
-CREATE SEQUENCE IF NOT EXISTS seq_ventas START 1;
-CREATE SEQUENCE IF NOT EXISTS seq_conteos START 1;
-CREATE SEQUENCE IF NOT EXISTS seq_costo_sku START 1;
 CREATE SEQUENCE IF NOT EXISTS seq_periodos_ingesta START 1;
+CREATE SEQUENCE IF NOT EXISTS seq_stock_sucursal START 1;
 
 -- ============================================================
 -- MOVIMIENTOS
--- Exportación del ERP. Cubre VTA (ventas), AJU (ajustes) y
--- REM (remitos: RE/RI). Es la fuente de movimientos diarios
--- por sucursal y SKU.
+-- Exportación del ERP. Única fuente de flujos por sucursal y SKU.
+-- TIPOMOV:
+--   VTA — ventas (FA/FB/NCA/NCB…; también son el denominador del %)
+--   REM — remitos (RE/RI)
+--   AJU — ajustes (incluye subtipo CS)
+--   INV — inventario físico (reemplaza a la antigua tabla `conteos`)
+-- `diferencia` se recalcula en ingesta como ingreso - egreso
+-- (negativo = faltante = merma).
 -- ============================================================
 CREATE TABLE IF NOT EXISTS movimientos (
     id               INTEGER PRIMARY KEY DEFAULT nextval('seq_movimientos'),
     fecha            DATE        NOT NULL,
-    tipomov          VARCHAR     NOT NULL,   -- VTA, AJU, REM
-    tipo             VARCHAR,               -- subtipo interno del ERP
-    numero           VARCHAR     NOT NULL,  -- número de comprobante
-    codigodepo       VARCHAR     NOT NULL,  -- código de sucursal
-    nombre           VARCHAR,               -- nombre del cliente/proveedor (del ERP)
+    tipomov          VARCHAR     NOT NULL,   -- VTA, REM, AJU, INV
+    tipo             VARCHAR,               -- subtipo interno del ERP (RE, RI, CS, ...)
+    numero           VARCHAR     NOT NULL,
+    codigodepo       VARCHAR     NOT NULL,
+    nombre           VARCHAR,
     codigo           VARCHAR     NOT NULL,  -- SKU
-    costo            DECIMAL(18,4),         -- costo unitario (formato AR: coma decimal)
+    costo            DECIMAL(18,4),         -- costo del movimiento (fallback de valorización)
     ingreso          DECIMAL(18,4),
     egreso           DECIMAL(18,4),
-    diferencia       DECIMAL(18,4),
-    usuario          VARCHAR,               -- campo USER del ERP
-    tipo_aj          VARCHAR,               -- campo TIPO AJ del ERP
+    diferencia       DECIMAL(18,4),         -- ingreso - egreso, neto con signo
+    usuario          VARCHAR,
+    tipo_aj          VARCHAR,
 
-    -- Campos de auditoría generados en ingesta
-    periodo          VARCHAR     NOT NULL,  -- 'YYYY-MM' o 'YYYY-QQ' según granularidad
-    archivo_origen   VARCHAR     NOT NULL,  -- nombre del archivo fuente
-    fecha_ingesta    TIMESTAMP   NOT NULL DEFAULT current_timestamp
-);
-
--- Índices para los joins más frecuentes
-CREATE INDEX IF NOT EXISTS idx_mov_sku_depo_fecha
-    ON movimientos (codigo, codigodepo, fecha);
-
-CREATE INDEX IF NOT EXISTS idx_mov_periodo
-    ON movimientos (periodo, codigodepo);
-
-
--- ============================================================
--- VENTAS
--- Reporte de ventas por período y sucursal. Granularidad:
--- quincena o mes. No hay fila por operación — es un agregado.
--- Cod.Dep. mapea directamente a codigodepo de movimientos.
--- ============================================================
-CREATE TABLE IF NOT EXISTS ventas (
-    id               INTEGER PRIMARY KEY DEFAULT nextval('seq_ventas'),
-    codigodepo       VARCHAR     NOT NULL,  -- sucursal
-    codigo           VARCHAR     NOT NULL,  -- SKU
-    descripcion      VARCHAR,
-    fecha_desde      DATE        NOT NULL,  -- inicio del período
-    fecha_hasta      DATE        NOT NULL,  -- fin del período
-    unidades         DECIMAL(18,4),         -- unidades vendidas en el período
-    venta_neta       DECIMAL(18,4),         -- importe neto (con descuentos aplicados)
-
-    -- Auditoría
+    periodo          VARCHAR     NOT NULL,  -- 'YYYY-MM'
     archivo_origen   VARCHAR     NOT NULL,
     fecha_ingesta    TIMESTAMP   NOT NULL DEFAULT current_timestamp
 );
 
-CREATE INDEX IF NOT EXISTS idx_ventas_sku_depo_periodo
-    ON ventas (codigo, codigodepo, fecha_desde, fecha_hasta);
+CREATE INDEX IF NOT EXISTS idx_mov_sku_depo_fecha
+    ON movimientos (codigo, codigodepo, fecha);
+
+CREATE INDEX IF NOT EXISTS idx_mov_tipomov_fecha
+    ON movimientos (tipomov, fecha, codigodepo);
 
 
 -- ============================================================
--- CONTEOS
--- Planilla de inventario físico exportada del ERP.
--- Stock Sistema vs Total Contado → diferencia = merma en unidades.
--- El costo unitario aquí es la fuente primaria de valorización
--- al momento del conteo.
+-- STOCK SUCURSAL
+-- Snapshots de stock del ERP, despivoteados a formato relacional
+-- (una fila por codigo, codigodepo, fecha_snapshot).
+-- Historial completo — nunca se sobrescribe.
+-- Fuente primaria de valorización: columnas `costo` y `lista_1`.
+-- La vista `stock_actual` apunta siempre al snapshot más reciente.
+--
+-- NOTA: la columna derivada LOG del archivo del ERP (= CDC + CR2) NO se
+-- carga; el stock logístico se computa sumando los depósitos marcados
+-- es_logistica en `depositos`.
 -- ============================================================
-CREATE TABLE IF NOT EXISTS conteos (
-    id                INTEGER PRIMARY KEY DEFAULT nextval('seq_conteos'),
-    codigodepo        VARCHAR     NOT NULL,
-    fecha_conteo      DATE        NOT NULL,
-    numero_inventario VARCHAR,              -- ID del inventario en el ERP
-    codigo            VARCHAR     NOT NULL, -- SKU
-    descripcion       VARCHAR,
-    stock_sistema     DECIMAL(18,4),
-    stock_real        DECIMAL(18,4),        -- total contado
-    diferencia        DECIMAL(18,4),        -- recalculada en ingesta: stock_real - stock_sistema
-    costo_unitario    DECIMAL(18,4),        -- costo del ERP al momento del conteo
+CREATE TABLE IF NOT EXISTS stock_sucursal (
+    id               INTEGER PRIMARY KEY DEFAULT nextval('seq_stock_sucursal'),
+    codigo           VARCHAR       NOT NULL,
+    codigodepo       VARCHAR       NOT NULL,
+    fecha_snapshot   DATE          NOT NULL,
+    stock            DECIMAL(18,4),
+    lista_1          DECIMAL(18,4),          -- precio de lista (valorización a venta)
+    costo            DECIMAL(18,4),          -- costo ERP (valorización a costo)
+    uxb              DECIMAL(18,4),
 
-    -- Auditoría
-    archivo_origen    VARCHAR     NOT NULL,
-    fecha_ingesta     TIMESTAMP   NOT NULL DEFAULT current_timestamp
+    archivo_origen   VARCHAR       NOT NULL,
+    fecha_ingesta    TIMESTAMP     NOT NULL DEFAULT current_timestamp,
+
+    UNIQUE (codigo, codigodepo, fecha_snapshot)
 );
 
-CREATE INDEX IF NOT EXISTS idx_conteos_sku_depo_fecha
-    ON conteos (codigo, codigodepo, fecha_conteo);
+CREATE INDEX IF NOT EXISTS idx_stock_sku_depo_fecha
+    ON stock_sucursal (codigo, codigodepo, fecha_snapshot);
 
-
--- ============================================================
--- COSTO SKU HISTORIAL
--- Calendario de costos por SKU. Se auto-puebla durante la
--- ingesta de movimientos a partir de remitos (RE/RI) con
--- costo > 0. Es la fuente complementaria de costo para
--- análisis inter-conteo.
--- ============================================================
-CREATE TABLE IF NOT EXISTS costo_sku_historial (
-    id               INTEGER PRIMARY KEY DEFAULT nextval('seq_costo_sku'),
-    codigo           VARCHAR     NOT NULL,  -- SKU
-    codigodepo       VARCHAR     NOT NULL,  -- sucursal del remito
-    fecha            DATE        NOT NULL,  -- fecha del remito
-    costo            DECIMAL(18,4) NOT NULL,
-    numero_remito    VARCHAR,               -- trazabilidad al movimiento origen
-    fecha_ingesta    TIMESTAMP   NOT NULL DEFAULT current_timestamp
-);
-
-CREATE INDEX IF NOT EXISTS idx_costo_sku_fecha
-    ON costo_sku_historial (codigo, codigodepo, fecha);
+CREATE INDEX IF NOT EXISTS idx_stock_snapshot
+    ON stock_sucursal (fecha_snapshot);
 
 
 -- ============================================================
 -- DEPOSITOS
 -- Catálogo de sucursales/depósitos. Upsert por codigodepo.
+-- es_logistica = TRUE para centros de distribución (CDC, CR2).
 -- ============================================================
 CREATE TABLE IF NOT EXISTS depositos (
-    codigodepo   VARCHAR PRIMARY KEY,
-    nombre       VARCHAR,
-    direccion    VARCHAR,
-    abreviacion  VARCHAR,
+    codigodepo    VARCHAR PRIMARY KEY,
+    nombre        VARCHAR,
+    direccion     VARCHAR,
+    abreviacion   VARCHAR,
+    es_logistica  BOOLEAN DEFAULT FALSE,
     fecha_ingesta TIMESTAMP
 );
 
 
 -- ============================================================
 -- ESTRUCTURA
--- Catálogo de rubros con jerarquía. Upsert por rubro.
--- Una fila por Rubro — no por SKU.
--- Join: articulos.rubro → estructura.rubro → jerarquía completa.
+-- Catálogo de rubros con jerarquía. Upsert por código de rubro (CR).
+-- Guarda el código y la descripción de cada nivel, para que el join con
+-- articulos.rubro funcione tanto si trae el código como el nombre.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS estructura (
-    rubro            VARCHAR PRIMARY KEY,
-    super_rubro      VARCHAR,
-    gran_super_rubro VARCHAR,
+    rubro_cod        VARCHAR PRIMARY KEY,   -- código de rubro (CR del ERP)
+    rubro            VARCHAR,               -- descripción de rubro (join por nombre)
+    super_rubro      VARCHAR,               -- descripción super rubro
+    gran_super_rubro VARCHAR,               -- descripción gran super rubro
     fecha_ingesta    TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_estructura_rubro ON estructura (rubro);
 
 
 -- ============================================================
 -- ARTICULOS
 -- Catálogo de SKUs. Upsert por codigo — nunca se borra.
--- rubro es FK hacia estructura.rubro.
--- EAN: código de barras. Clase: A/B/C para análisis Pareto
--- (en desuso actualmente, se instrumentará próximamente).
 -- ============================================================
 CREATE TABLE IF NOT EXISTS articulos (
     codigo        VARCHAR PRIMARY KEY,
     descripcion   VARCHAR,
-    rubro         VARCHAR,               -- FK → estructura.rubro
+    rubro         VARCHAR,               -- FK -> estructura.rubro
     marca         VARCHAR,
-    ean           VARCHAR,               -- código de barras
+    ean           VARCHAR,
     clase         VARCHAR,               -- A, B, C (Pareto)
     activo        BOOLEAN,
     fecha_ingesta TIMESTAMP
@@ -203,22 +176,133 @@ CREATE TABLE IF NOT EXISTS articulos (
 
 
 -- ============================================================
+-- TIPOS CATEGORIA
+-- Mapeo configurable: subtipo del ERP (`tipo`) -> categoría de
+-- negocio. Define el pivoteo del análisis de merma y qué
+-- categorías suman al numerador. Editable sin tocar código.
+--   es_merma = TRUE  -> la parte negativa suma a la merma total
+--   es_merma = FALSE -> categoría informativa (ej: Ventas)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS tipos_categoria (
+    tipo          VARCHAR PRIMARY KEY,   -- subtipo del ERP: FA, INV, RI, MD, CS, ...
+    tipomov       VARCHAR,               -- tipomov asociado (informativo)
+    categoria     VARCHAR     NOT NULL,  -- Ventas, Inventario, Remitido, Dif. de camión, ...
+    es_merma      BOOLEAN     DEFAULT TRUE,   -- la parte negativa suma a la merma
+    es_venta      BOOLEAN     DEFAULT FALSE,  -- cuenta como venta (denominador del %)
+    orden         INTEGER,               -- orden de despliegue de columnas
+    fecha_ingesta TIMESTAMP
+);
+
+
+-- ============================================================
 -- PERIODOS INGESTA
 -- Registro de qué archivos/períodos fueron procesados.
--- Permite detectar duplicados y ejecutar reemplazos explícitos.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS periodos_ingesta (
-    id               INTEGER PRIMARY KEY DEFAULT nextval('seq_periodos_ingesta'),
-    tabla            VARCHAR     NOT NULL,  -- 'movimientos', 'ventas', 'conteos'
-    periodo          VARCHAR     NOT NULL,  -- identificador del período
-    codigodepo       VARCHAR,               -- NULL = aplica a todos
-    archivo_origen   VARCHAR     NOT NULL,
-    fecha_ingesta    TIMESTAMP   NOT NULL DEFAULT current_timestamp,
-    estado           VARCHAR     NOT NULL DEFAULT 'ok',  -- 'ok', 'reemplazado'
+    id                 INTEGER PRIMARY KEY DEFAULT nextval('seq_periodos_ingesta'),
+    tabla              VARCHAR     NOT NULL,
+    periodo            VARCHAR     NOT NULL,
+    codigodepo         VARCHAR,
+    archivo_origen     VARCHAR     NOT NULL,
+    fecha_ingesta      TIMESTAMP   NOT NULL DEFAULT current_timestamp,
+    estado             VARCHAR     NOT NULL DEFAULT 'ok',  -- 'ok', 'reemplazado'
     registros_cargados INTEGER
 );
 
+
+-- ============================================================
+-- VISTA: stock_actual
+-- Snapshot más reciente por (codigo, codigodepo).
+-- ============================================================
+CREATE OR REPLACE VIEW stock_actual AS
+SELECT s.*
+FROM stock_sucursal s
+INNER JOIN (
+    SELECT codigo, codigodepo, MAX(fecha_snapshot) AS ultima_fecha
+    FROM stock_sucursal
+    GROUP BY codigo, codigodepo
+) ult
+    ON  s.codigo         = ult.codigo
+    AND s.codigodepo     = ult.codigodepo
+    AND s.fecha_snapshot = ult.ultima_fecha;
+
 """
+
+
+# ---------------------------------------------------------------------------
+# Seed: catálogo por defecto de tipos -> categoría
+# ---------------------------------------------------------------------------
+# Catálogo del ERP. El cliente puede editar/extender esta tabla sin tocar
+# código.
+#   es_merma=TRUE  -> pérdida no explicada: Inventario, Dif. de camión, Ajustes.
+#   es_venta=TRUE  -> cuenta como venta (denominador del %): Ventas.
+# Remitos son flujos legítimos (ni merma ni venta).
+DEFAULT_TIPOS_CATEGORIA = [
+    # (tipo,  tipomov, categoria,         es_merma, es_venta, orden)
+    ("FA",   "VTA", "Ventas",         False, True,  1),  # Factura A
+    ("FB",   "VTA", "Ventas",         False, True,  1),  # Factura B
+    ("NCA",  "VTA", "Ventas",         False, True,  1),  # Nota crédito A
+    ("NCB",  "VTA", "Ventas",         False, True,  1),  # Nota crédito B
+    ("FCA",  "VTA", "Ventas",         False, True,  1),  # Factura compra A
+    ("NCCA", "VTA", "Ventas",         False, True,  1),  # Nota crédito compra A
+    ("INV",  "INV", "Inventario",     True,  False, 2),  # Inventario físico
+    ("MD",   "REM", "Dif. de camión", True,  False, 3),  # Movimiento directo
+    ("CS",   "AJU", "Ajustes",        True,  False, 4),  # Control de stock
+    ("RE",   "REM", "Remitido",       False, False, 5),  # Remito externo (recepción)
+    ("RI",   "REM", "Remitido",       False, False, 5),  # Remito interno (transferencia)
+    ("RDC",  "REM", "Remitido",       False, False, 5),  # Remito devolución compra
+]
+
+
+def _migrar(conn: duckdb.DuckDBPyConnection) -> None:
+    """
+    Lleva una DB preexistente al schema actual sin perder datos.
+    Agrega columnas nuevas que `CREATE TABLE IF NOT EXISTS` no toca en tablas
+    que ya existían. Idempotente.
+    """
+    def columnas(tabla: str) -> set[str]:
+        return {r[1] for r in conn.execute(f"PRAGMA table_info('{tabla}')").fetchall()}
+
+    # estructura: rubro_cod (código de rubro)
+    if "estructura" in _tablas(conn) and "rubro_cod" not in columnas("estructura"):
+        conn.execute("ALTER TABLE estructura ADD COLUMN rubro_cod VARCHAR")
+        print("  [migración] estructura += rubro_cod")
+
+    # tipos_categoria: es_venta (denominador)
+    if "tipos_categoria" in _tablas(conn) and "es_venta" not in columnas("tipos_categoria"):
+        conn.execute("ALTER TABLE tipos_categoria ADD COLUMN es_venta BOOLEAN DEFAULT FALSE")
+        ventas_tipos = [t for (t, _tm, _c, _em, ev, _o) in DEFAULT_TIPOS_CATEGORIA if ev]
+        if ventas_tipos:
+            marcadores = ", ".join("?" * len(ventas_tipos))
+            conn.execute(
+                f"UPDATE tipos_categoria SET es_venta = TRUE WHERE tipo IN ({marcadores})",
+                ventas_tipos,
+            )
+        print("  [migración] tipos_categoria += es_venta")
+
+
+def _tablas(conn: duckdb.DuckDBPyConnection) -> set[str]:
+    return {
+        r[0] for r in conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        ).fetchall()
+    }
+
+
+def _sembrar_tipos_categoria(conn: duckdb.DuckDBPyConnection) -> None:
+    """Inserta el catálogo por defecto solo si la tabla está vacía (idempotente)."""
+    n = conn.execute("SELECT COUNT(*) FROM tipos_categoria").fetchone()[0]
+    if n > 0:
+        return
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    conn.executemany(
+        "INSERT INTO tipos_categoria "
+        "(tipo, tipomov, categoria, es_merma, es_venta, orden, fecha_ingesta) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(t, tm, cat, em, ev, o, now) for (t, tm, cat, em, ev, o) in DEFAULT_TIPOS_CATEGORIA],
+    )
+    print(f"  Catálogo tipos_categoria sembrado ({len(DEFAULT_TIPOS_CATEGORIA)} subtipos por defecto)")
 
 
 # ---------------------------------------------------------------------------
@@ -230,27 +314,47 @@ def setup(project_name: str, reset: bool = False) -> None:
     conn = duckdb.connect(str(db_path))
 
     if reset:
-        print(f"  [RESET] Eliminando tablas existentes en '{project_name}'...")
+        print(f"  [RESET] Eliminando objetos existentes en '{project_name}'...")
+        conn.execute("DROP VIEW IF EXISTS stock_actual")
         tables = [
-            "movimientos", "ventas", "conteos", "costo_sku_historial",
-            "periodos_ingesta", "depositos", "estructura", "articulos"
+            "movimientos", "stock_sucursal",
+            "periodos_ingesta", "depositos", "estructura", "articulos",
+            "tipos_categoria",
+            # legacy — se eliminan si existen
+            "ventas", "conteos", "costo_sku_historial",
         ]
         for table in tables:
             conn.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
+        sequences = [
+            "seq_movimientos", "seq_periodos_ingesta", "seq_stock_sucursal",
+            # legacy
+            "seq_ventas", "seq_conteos", "seq_costo_sku",
+        ]
+        for seq in sequences:
+            conn.execute(f"DROP SEQUENCE IF EXISTS {seq}")
 
     print(f"  Creando schema en: {db_path}")
     conn.execute(SCHEMA_SQL)
+    _migrar(conn)
+    _sembrar_tipos_categoria(conn)
 
-    # Verificación
-    result = conn.execute("""
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'main'
-        ORDER BY table_name
-    """).fetchall()
+    tablas = [
+        r[0] for r in conn.execute("""
+            SELECT table_name FROM information_schema.tables
+            WHERE table_schema = 'main' AND table_type = 'BASE TABLE'
+            ORDER BY table_name
+        """).fetchall()
+    ]
+    vistas = [
+        r[0] for r in conn.execute("""
+            SELECT table_name FROM information_schema.tables
+            WHERE table_schema = 'main' AND table_type = 'VIEW'
+            ORDER BY table_name
+        """).fetchall()
+    ]
 
-    tablas = [r[0] for r in result]
-    print(f"  Tablas creadas: {', '.join(tablas)}")
+    print(f"  Tablas ({len(tablas)}): {', '.join(tablas)}")
+    print(f"  Vistas ({len(vistas)}): {', '.join(vistas)}")
     conn.close()
     print(f"  Setup completo para proyecto '{project_name}'")
 
@@ -260,13 +364,24 @@ def setup(project_name: str, reset: bool = False) -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Inicializa el schema de MermaIQ para un proyecto.")
-    parser.add_argument("--project", required=True, help="Nombre del proyecto/cliente (ej: cliente_alfa)")
-    parser.add_argument("--reset", action="store_true", help="Elimina y recrea todas las tablas (borra datos)")
+    parser = argparse.ArgumentParser(
+        description="Inicializa el schema de MermaIQ para un proyecto."
+    )
+    parser.add_argument(
+        "--project", required=True,
+        help="Nombre del proyecto/cliente (ej: cliente_alfa)"
+    )
+    parser.add_argument(
+        "--reset", action="store_true",
+        help="Elimina y recrea todas las tablas (borra datos)"
+    )
     args = parser.parse_args()
 
     if args.reset:
-        confirm = input(f"  ADVERTENCIA: --reset borrará todos los datos de '{args.project}'. Confirmás? (s/N): ")
+        confirm = input(
+            f"  ADVERTENCIA: --reset borrará todos los datos de '{args.project}'. "
+            f"Confirmás? (s/N): "
+        )
         if confirm.lower() != "s":
             print("  Cancelado.")
             exit(0)

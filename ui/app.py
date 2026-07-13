@@ -1,10 +1,10 @@
 """
-ui/app.py — Interfaz principal de MermaIQ
+ui/app.py — Interfaz principal de MermaIQ (v2: análisis por selección de período)
 
 Estructura de páginas:
     1. Inicio        — Selección de proyecto, métricas rápidas
     2. Ingesta       — Ver períodos cargados, ingestar archivos pendientes
-    3. Análisis      — Tabla de merma por SKU (INV / REM / CS)
+    3. Análisis      — Tabla de merma por SKU (pivot por categoría)
     4. Sucursales    — Resumen agregado por sucursal
     5. Rubros        — Pareto por rubro
 
@@ -17,6 +17,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
+from datetime import date
 import sys
 
 # Asegurar que el root del proyecto esté en el path
@@ -24,7 +25,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from setup_db import get_db_path, get_connection
-from core.merma import calcular_merma
+from core.merma import calcular_merma, listar_categorias, listar_fechas_valorizacion
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +124,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# Paleta para las categorías de merma en los gráficos
+PALETA = ["#ff6b6b", "#ffa94d", "#748ffc", "#64ffda", "#f783ac", "#a9e34b", "#ffd43b"]
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -137,22 +142,37 @@ def listar_proyectos() -> list[str]:
     ])
 
 
-def listar_conteos(proyecto: str) -> pd.DataFrame:
+def listar_sucursales(proyecto: str) -> pd.DataFrame:
+    """Sucursales con movimientos, con nombre si existe."""
     conn = get_connection(proyecto)
     df = conn.execute("""
-        SELECT
-            c.codigodepo,
-            d.nombre        AS sucursal,
-            c.fecha_conteo,
-            COUNT(*)        AS skus,
-            SUM(CASE WHEN c.diferencia < 0 THEN 1 ELSE 0 END) AS skus_con_merma
-        FROM conteos c
-        LEFT JOIN depositos d ON c.codigodepo = d.codigodepo
-        GROUP BY c.codigodepo, d.nombre, c.fecha_conteo
-        ORDER BY c.fecha_conteo DESC, c.codigodepo
+        SELECT DISTINCT m.codigodepo, d.nombre
+        FROM movimientos m
+        LEFT JOIN depositos d ON m.codigodepo = d.codigodepo
+        WHERE m.codigodepo IS NOT NULL
+        ORDER BY m.codigodepo
     """).df()
     conn.close()
     return df
+
+
+def rango_disponible(proyecto: str) -> tuple[date | None, date | None]:
+    """Rango de fechas con movimientos."""
+    conn = get_connection(proyecto)
+    rm = conn.execute("SELECT MIN(fecha), MAX(fecha) FROM movimientos").fetchone()
+    conn.close()
+    return rm[0], rm[1]
+
+
+def categorias_merma(proyecto: str) -> list[str]:
+    """Categorías marcadas es_merma, en orden de catálogo."""
+    conn = get_connection(proyecto)
+    rows = conn.execute("""
+        SELECT categoria FROM tipos_categoria
+        WHERE es_merma GROUP BY categoria ORDER BY MIN(orden), categoria
+    """).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
 
 
 def listar_periodos_ingesta(proyecto: str) -> pd.DataFrame:
@@ -177,6 +197,19 @@ def formatear_pct(valor) -> str:
     if pd.isna(valor) or valor is None:
         return "—"
     return f"{valor:.2f}%"
+
+
+def formatear_unidades(valor) -> str:
+    if pd.isna(valor) or valor is None:
+        return "—"
+    return f"{valor:,.0f}"
+
+
+def merma_por_categoria(df: pd.DataFrame, cat: str) -> pd.Series:
+    """Magnitud de merma (parte negativa, en positivo) de una columna-categoría."""
+    if cat not in df.columns:
+        return pd.Series(0.0, index=df.index)
+    return (-df[cat]).clip(lower=0)
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +249,55 @@ with st.sidebar:
 
 
 # ---------------------------------------------------------------------------
+# Controles compartidos de período/valorización
+# ---------------------------------------------------------------------------
+
+def controles_periodo(proyecto: str, key_prefix: str):
+    """Renderiza fecha_desde, fecha_hasta, modo y fecha de valorización."""
+    fmin, fmax = rango_disponible(proyecto)
+    if fmin is None:
+        st.info("No hay movimientos cargados todavía.")
+        return None
+
+    snapshots = listar_fechas_valorizacion(proyecto)
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        fecha_desde = st.date_input(
+            "Desde", value=fmin, min_value=fmin, max_value=fmax,
+            key=f"{key_prefix}_desde",
+        )
+    with c2:
+        fecha_hasta = st.date_input(
+            "Hasta", value=fmax, min_value=fmin, max_value=fmax,
+            key=f"{key_prefix}_hasta",
+        )
+    with c3:
+        modo_val = st.selectbox(
+            "Valorización", ["costo", "lista_1"],
+            format_func=lambda x: "A costo" if x == "costo" else "A precio de lista",
+            key=f"{key_prefix}_modo",
+        )
+    with c4:
+        if snapshots:
+            fecha_val = st.selectbox(
+                "Valorizar al (snapshot)", snapshots,
+                key=f"{key_prefix}_fval",
+                help="Fecha del stock con la que se valoriza. Default: el más reciente.",
+            )
+        else:
+            fecha_val = None
+            st.warning("Sin snapshots de stock — no se puede valorizar.")
+
+    return {
+        "fecha_desde": str(fecha_desde),
+        "fecha_hasta": str(fecha_hasta),
+        "modo_valorizacion": modo_val,
+        "fecha_valorizacion": fecha_val,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Página: INICIO
 # ---------------------------------------------------------------------------
 
@@ -223,31 +305,31 @@ if pagina == "Inicio":
     st.title(f"Bienvenido — {proyecto}")
 
     conn = get_connection(proyecto)
-
-    # Métricas rápidas
-    n_conteos = conn.execute("SELECT COUNT(DISTINCT fecha_conteo || codigodepo) FROM conteos").fetchone()[0]
+    n_inv = conn.execute(
+        "SELECT COUNT(DISTINCT fecha || '|' || codigodepo) FROM movimientos WHERE tipomov = 'INV'"
+    ).fetchone()[0]
     n_movimientos = conn.execute("SELECT COUNT(*) FROM movimientos").fetchone()[0]
-    n_ventas = conn.execute("SELECT COUNT(*) FROM ventas").fetchone()[0]
     n_skus = conn.execute("SELECT COUNT(DISTINCT codigo) FROM articulos WHERE activo = true").fetchone()[0]
     n_sucursales = conn.execute("SELECT COUNT(*) FROM depositos").fetchone()[0]
     conn.close()
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Conteos cargados", n_conteos)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Inventarios cargados", n_inv)
     col2.metric("Movimientos", f"{n_movimientos:,}")
-    col3.metric("Registros de ventas", f"{n_ventas:,}")
-    col4.metric("SKUs activos", f"{n_skus:,}")
-    col5.metric("Sucursales", n_sucursales)
+    col3.metric("SKUs activos", f"{n_skus:,}")
+    col4.metric("Sucursales", n_sucursales)
+
+    fmin, fmax = rango_disponible(proyecto)
+    if fmin:
+        st.caption(f"Datos disponibles: {fmin} → {fmax}")
 
     st.markdown("---")
-
-    # Últimos conteos
-    st.subheader("Últimos conteos cargados")
-    df_conteos = listar_conteos(proyecto)
-    if df_conteos.empty:
-        st.info("No hay conteos cargados aún. Ingresá los archivos en la página Ingesta.")
+    st.subheader("Últimas ingestas")
+    df_periodos = listar_periodos_ingesta(proyecto)
+    if df_periodos.empty:
+        st.info("No hay datos cargados aún. Ingresá los archivos en la página Ingesta.")
     else:
-        st.dataframe(df_conteos, use_container_width=True, hide_index=True)
+        st.dataframe(df_periodos.head(15), width="stretch", hide_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -264,19 +346,23 @@ elif pagina == "Ingesta":
         if df_periodos.empty:
             st.info("No hay datos cargados aún.")
         else:
-            # Filtro por tabla
             tablas = ["Todos"] + sorted(df_periodos["tabla"].unique().tolist())
             filtro = st.selectbox("Filtrar por tabla", tablas)
             if filtro != "Todos":
                 df_periodos = df_periodos[df_periodos["tabla"] == filtro]
-            st.dataframe(df_periodos, use_container_width=True, hide_index=True)
+            st.dataframe(df_periodos, width="stretch", hide_index=True)
 
     with tab2:
         st.markdown("#### Cargar archivo manualmente")
+        st.caption(
+            "El inventario físico entra dentro de **movimientos** "
+            "(TIPOMOV='INV'), en el mismo export del ERP — no se carga como "
+            "archivo aparte."
+        )
 
         tipo_archivo = st.selectbox(
             "Tipo de archivo",
-            ["movimientos", "ventas", "conteo", "depositos", "estructura", "articulos"]
+            ["movimientos", "stock", "depositos", "estructura", "articulos"]
         )
 
         archivo = st.file_uploader(
@@ -285,44 +371,61 @@ elif pagina == "Ingesta":
             key=f"uploader_{tipo_archivo}"
         )
 
-        if tipo_archivo == "conteo" and archivo:
-            col1, col2 = st.columns(2)
-            with col1:
-                codigodepo = st.text_input("Código de sucursal (ej: 002)")
-            with col2:
-                fecha_conteo = st.date_input("Fecha del conteo")
+        if tipo_archivo == "stock":
+            fecha_snapshot = st.date_input("Fecha del snapshot de stock")
+
+        multi_hoja = False
+        if tipo_archivo == "movimientos":
+            multi_hoja = st.checkbox(
+                "Archivo con varias pestañas (una por mes)", value=False,
+                help="Carga cada pestaña como su propio período.",
+            )
 
         forzar = st.checkbox("Reemplazar si ya existe (forzar)", value=False)
 
         if archivo and st.button("Ingestar"):
-            # Guardar temporalmente
-            tmp_path = ROOT / "exports" / archivo.name
+            tmp_dir = ROOT / "exports"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            tmp_path = tmp_dir / archivo.name
             tmp_path.write_bytes(archivo.read())
 
             try:
                 with st.spinner("Procesando..."):
                     if tipo_archivo == "movimientos":
-                        from ingesta.movimientos import ingestar_movimientos
-                        r = ingestar_movimientos(tmp_path, proyecto, forzar=forzar)
-                        st.success(f"✓ {r['registros']} movimientos cargados — período {r['periodo']}")
-
-                    elif tipo_archivo == "ventas":
-                        from ingesta.ventas import ingestar_ventas
-                        r = ingestar_ventas(tmp_path, proyecto, forzar=forzar)
-                        st.success(f"✓ {r['registros']} ventas cargadas — período {r['periodo']}")
-
-                    elif tipo_archivo == "conteo":
-                        if not codigodepo:
-                            st.error("Ingresá el código de sucursal.")
-                        else:
-                            from ingesta.conteos import ingestar_conteo
-                            r = ingestar_conteo(
-                                tmp_path, proyecto,
-                                codigodepo=codigodepo,
-                                fecha_conteo=str(fecha_conteo),
-                                forzar=forzar
+                        if multi_hoja:
+                            from ingesta.movimientos import ingestar_libro_movimientos
+                            r = ingestar_libro_movimientos(tmp_path, proyecto, forzar=forzar)
+                            st.success(
+                                f"✓ {r['registros_total']} movimientos — "
+                                f"{r['cargadas']}/{r['hojas']} pestañas cargadas"
                             )
-                            st.success(f"✓ {r['registros']} SKUs cargados — merma $ {r['merma_valorizada']:,.0f}")
+                            if r["errores"]:
+                                st.warning(
+                                    "Pestañas con error: "
+                                    + ", ".join(f"{e['hoja']} ({e['error']})" for e in r["errores"])
+                                )
+                        else:
+                            from ingesta.movimientos import ingestar_movimientos
+                            r = ingestar_movimientos(tmp_path, proyecto, forzar=forzar)
+                            st.success(f"✓ {r['registros']} movimientos cargados — período {r['periodo']}")
+
+                    elif tipo_archivo == "stock":
+                        from ingesta.stock import ingestar_stock
+                        r = ingestar_stock(
+                            tmp_path, proyecto,
+                            fecha_snapshot=str(fecha_snapshot),
+                            forzar=forzar
+                        )
+                        st.success(
+                            f"✓ {r['registros']:,} registros cargados — "
+                            f"{len(r['sucursales_mapeadas'])} sucursales — "
+                            f"snapshot {r['fecha_snapshot']}"
+                        )
+                        if r['columnas_no_mapeadas']:
+                            st.warning(
+                                f"Columnas sin mapeo en depósitos (ignoradas): "
+                                f"{r['columnas_no_mapeadas']}"
+                            )
 
                     elif tipo_archivo == "depositos":
                         from ingesta.referencias import cargar_depositos
@@ -352,131 +455,203 @@ elif pagina == "Ingesta":
 elif pagina == "Análisis":
     st.title("Análisis de merma")
 
-    df_conteos = listar_conteos(proyecto)
+    sucursales = listar_sucursales(proyecto)
 
-    if df_conteos.empty:
-        st.info("No hay conteos cargados. Ingresá los archivos primero.")
+    if sucursales.empty:
+        st.info("No hay datos cargados. Ingresá movimientos primero.")
     else:
-        # Controles
-        col1, col2, col3 = st.columns(3)
+        TODAS = "__todas__"
+        suc_opts = [TODAS] + sucursales["codigodepo"].tolist()
+        suc_label = dict(zip(sucursales["codigodepo"], sucursales["nombre"].fillna("")))
+        suc_sel = st.selectbox(
+            "Sucursal", suc_opts,
+            format_func=lambda c: ("⊕ Todas las sucursales" if c == TODAS
+                                   else f"{c} — {suc_label.get(c, '')}".strip(" —")),
+        )
 
-        with col1:
-            sucursales = df_conteos["codigodepo"].unique().tolist()
-            suc_sel = st.selectbox("Sucursal", sucursales)
+        ctrl = controles_periodo(proyecto, "analisis")
 
-        with col2:
-            fechas = df_conteos[df_conteos["codigodepo"] == suc_sel]["fecha_conteo"].tolist()
-            fecha_sel = st.selectbox("Fecha de conteo", fechas)
-
-        with col3:
-            modo = st.selectbox(
-                "Modo de ventana",
-                ["conteo_anterior", "periodo_fijo"],
-                format_func=lambda x: "Desde conteo anterior" if x == "conteo_anterior" else "Período fijo"
-            )
-
-        dias = 90
-        if modo == "periodo_fijo":
-            dias = st.slider("Días hacia atrás", 30, 365, 90)
-
-        if st.button("Calcular merma"):
+        if ctrl and st.button("Calcular merma"):
             with st.spinner("Calculando..."):
                 try:
-                    df = calcular_merma(
-                        proyecto, suc_sel, str(fecha_sel),
-                        modo=modo, dias=dias
-                    )
+                    depo = None if suc_sel == TODAS else suc_sel
+                    df = calcular_merma(proyecto, depo, **ctrl)
                     st.session_state["df_merma"] = df
+                    st.session_state["cats_merma"] = df.attrs.get("categorias", [])
+                    st.session_state["fval_merma"] = df.attrs.get("fecha_valorizacion")
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-        # Mostrar resultados
         if "df_merma" in st.session_state:
-            df = st.session_state["df_merma"]
+            df_full = st.session_state["df_merma"]
+            cats = st.session_state.get("cats_merma", [])
+            fval = st.session_state.get("fval_merma")
 
-            # Métricas resumen
             st.markdown("---")
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("SKUs analizados", len(df))
-            col2.metric(
-                "Merma total valorizada",
-                formatear_pesos(df["merma_total_valorizada"].sum())
-            )
-            col3.metric(
-                "Venta total período",
-                formatear_pesos(df["venta_neta"].sum())
-            )
-            venta_total = df["venta_neta"].sum()
-            merma_total = df["merma_total_valorizada"].sum()
+
+            # --- Filtros sobre el resultado (sin recalcular) -----------------
+            st.markdown("#### Filtros")
+            fc1, fc2, fc3, fc4 = st.columns(4)
+            with fc1:
+                f_gsr = st.multiselect(
+                    "Gran Super Rubro",
+                    sorted(df_full["gran_super_rubro"].dropna().unique().tolist()),
+                )
+            with fc2:
+                f_rubro = st.multiselect(
+                    "Rubro",
+                    sorted(df_full["rubro"].dropna().unique().tolist()),
+                )
+            with fc3:
+                f_marca = st.multiselect(
+                    "Marca",
+                    sorted(df_full["marca"].dropna().unique().tolist()),
+                )
+            with fc4:
+                f_texto = st.text_input("Buscar SKU / descripción")
+
+            df = df_full
+            if f_gsr:
+                df = df[df["gran_super_rubro"].isin(f_gsr)]
+            if f_rubro:
+                df = df[df["rubro"].isin(f_rubro)]
+            if f_marca:
+                df = df[df["marca"].isin(f_marca)]
+            if f_texto:
+                t = f_texto.strip().lower()
+                df = df[
+                    df["codigo"].str.lower().str.contains(t, na=False)
+                    | df["descripcion"].str.lower().str.contains(t, na=False)
+                ]
+
+            # --- KPIs ---------------------------------------------------------
+            merma_total   = df["merma_total_valorizada"].sum()
+            merma_total_u = df["merma_total_unidades"].sum()
+            venta_total   = df["venta_neta"].sum()
             pct_total = (merma_total / venta_total * 100) if venta_total > 0 else None
-            col4.metric(
-                "% Merma s/ventas",
-                formatear_pct(pct_total)
-            )
+            skus_con_merma = int((df["merma_total_valorizada"] > 0).sum())
 
-            # Tabla detalle
+            col1, col2, col3, col4, col5 = st.columns(5)
+            col1.metric("SKUs analizados", f"{len(df):,}")
+            col2.metric("SKUs con merma", f"{skus_con_merma:,}")
+            col3.metric("Merma total", formatear_pesos(merma_total),
+                        delta=f"{merma_total_u:,.0f} unidades", delta_color="off")
+            col4.metric("Venta total período", formatear_pesos(venta_total))
+            col5.metric("% Merma s/ventas", formatear_pct(pct_total))
+            if fval:
+                st.caption(f"Valorizado con snapshot de stock del **{fval}**")
+
+            # --- Tabla detalle -------------------------------------------------
             st.markdown("#### Detalle por SKU")
+            vista = st.radio(
+                "Mostrar", ["Valorizado", "Unidades", "Ambos"],
+                horizontal=True, key="analisis_vista",
+            )
 
-            cols_mostrar = [
-                "codigo", "descripcion",
-                "merma_inv_unidades", "merma_inv_valorizada",
-                "merma_rem_unidades", "merma_rem_valorizada",
-                "merma_cs_unidades",  "merma_cs_valorizada",
-                "merma_total_valorizada",
-                "venta_neta", "pct_merma_sobre_ventas",
-                "ventana_origen", "dias_ventana",
+            cols_base = ["codigo", "descripcion", "rubro"]
+            headers   = ["Código", "Descripción", "Rubro"]
+            cols_mostrar, formato = [], {}
+            for c in cats:
+                if vista in ("Valorizado", "Ambos"):
+                    cols_mostrar.append(c); headers.append(f"{c} $")
+                    formato[c] = formatear_pesos
+                if vista in ("Unidades", "Ambos"):
+                    cu = f"{c} (u)"
+                    cols_mostrar.append(cu); headers.append(f"{c} u.")
+                    formato[cu] = formatear_unidades
+            cols_fin = [
+                ("merma_total_valorizada", "Merma Total $", formatear_pesos),
+                ("merma_total_unidades",   "Merma Total u.", formatear_unidades),
+                ("venta_neta",             "Venta $",        formatear_pesos),
+                ("pct_merma_sobre_ventas", "% Merma",        formatear_pct),
             ]
+            for c, h, f in cols_fin:
+                cols_mostrar.append(c); headers.append(h); formato[c] = f
 
-            df_display = df[cols_mostrar].copy()
-            df_display["merma_inv_valorizada"]   = df_display["merma_inv_valorizada"].apply(formatear_pesos)
-            df_display["merma_rem_valorizada"]   = df_display["merma_rem_valorizada"].apply(formatear_pesos)
-            df_display["merma_cs_valorizada"]    = df_display["merma_cs_valorizada"].apply(formatear_pesos)
-            df_display["merma_total_valorizada"] = df_display["merma_total_valorizada"].apply(formatear_pesos)
-            df_display["venta_neta"]             = df_display["venta_neta"].apply(formatear_pesos)
-            df_display["pct_merma_sobre_ventas"] = df_display["pct_merma_sobre_ventas"].apply(formatear_pct)
+            df_display = df[cols_base + cols_mostrar].copy()
+            for c, f in formato.items():
+                df_display[c] = df_display[c].apply(f)
+            df_display.columns = headers
+            st.dataframe(df_display, width="stretch", hide_index=True)
 
-            df_display.columns = [
-                "Código", "Descripción",
-                "INV u.", "INV $",
-                "REM u.", "REM $",
-                "CS u.",  "CS $",
-                "Total $",
-                "Venta $", "% Merma",
-                "Ventana", "Días",
-            ]
-
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
-
-            # Gráfico top 15 por merma valorizada
-            st.markdown("#### Top 15 SKUs por merma valorizada")
-            df_top = df.nlargest(15, "merma_total_valorizada").copy()
-            df_top["label"] = df_top["codigo"] + " - " + df_top["descripcion"].fillna("")
-
-            fig = go.Figure()
-            fig.add_bar(
-                name="INV", x=df_top["label"], y=df_top["merma_inv_valorizada"].fillna(0),
-                marker_color="#ff6b6b"
-            )
-            fig.add_bar(
-                name="REM", x=df_top["label"], y=df_top["merma_rem_valorizada"].fillna(0),
-                marker_color="#ffa94d"
-            )
-            fig.add_bar(
-                name="CS", x=df_top["label"], y=df_top["merma_cs_valorizada"].fillna(0),
-                marker_color="#748ffc"
-            )
-            fig.update_layout(
-                barmode="stack",
-                plot_bgcolor="#0f1117",
-                paper_bgcolor="#0f1117",
+            # --- Dashboard ------------------------------------------------------
+            merma_cats = [c for c in categorias_merma(proyecto) if c in df.columns]
+            layout_oscuro = dict(
+                plot_bgcolor="#0f1117", paper_bgcolor="#0f1117",
                 font=dict(color="#ccd6f6", family="IBM Plex Mono"),
-                xaxis=dict(tickangle=-45, gridcolor="#1e2130"),
-                yaxis=dict(gridcolor="#1e2130"),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                height=450,
-                margin=dict(b=160),
             )
-            st.plotly_chart(fig, use_container_width=True)
+
+            if merma_cats and merma_total > 0:
+                g1, g2 = st.columns([1, 2])
+
+                # Composición de la merma por categoría
+                with g1:
+                    st.markdown("#### Composición de la merma")
+                    comp = {c: merma_por_categoria(df, c).sum() for c in merma_cats}
+                    comp = {k: v for k, v in comp.items() if v > 0}
+                    fig = go.Figure(go.Pie(
+                        labels=list(comp.keys()), values=list(comp.values()),
+                        hole=0.55,
+                        marker=dict(colors=[PALETA[i % len(PALETA)] for i in range(len(comp))]),
+                        textinfo="label+percent",
+                    ))
+                    fig.update_layout(height=380, showlegend=False, **layout_oscuro)
+                    st.plotly_chart(fig, width="stretch")
+
+                # Top 15 SKUs por merma
+                with g2:
+                    st.markdown("#### Top 15 SKUs por merma")
+                    df_top = df.nlargest(15, "merma_total_valorizada").copy()
+                    df_top["label"] = df_top["codigo"] + " - " + df_top["descripcion"].fillna("").str.slice(0, 30)
+                    fig = go.Figure()
+                    for i, cat in enumerate(merma_cats):
+                        fig.add_bar(
+                            name=cat, x=df_top["label"],
+                            y=merma_por_categoria(df_top, cat),
+                            marker_color=PALETA[i % len(PALETA)],
+                        )
+                    fig.update_layout(
+                        barmode="stack", height=380,
+                        xaxis=dict(tickangle=-45, gridcolor="#1e2130"),
+                        yaxis=dict(gridcolor="#1e2130"),
+                        margin=dict(b=120), **layout_oscuro,
+                    )
+                    st.plotly_chart(fig, width="stretch")
+
+                # Merma vs venta por gran super rubro (o rubro si no hay jerarquía)
+                nivel_dash = ("gran_super_rubro"
+                              if df["gran_super_rubro"].notna().any() else "rubro")
+                st.markdown(f"#### Merma vs venta por {'gran super rubro' if nivel_dash == 'gran_super_rubro' else 'rubro'}")
+                df_gr = (
+                    df.groupby(nivel_dash, dropna=False)
+                    .agg(merma=("merma_total_valorizada", "sum"),
+                         venta=("venta_neta", "sum"))
+                    .reset_index()
+                    .sort_values("merma", ascending=False)
+                    .head(12)
+                )
+                df_gr[nivel_dash] = df_gr[nivel_dash].fillna("Sin clasificar")
+                df_gr["pct"] = (df_gr["merma"] / df_gr["venta"] * 100).where(df_gr["venta"] > 0)
+                fig = go.Figure()
+                fig.add_bar(
+                    name="Merma $", x=df_gr[nivel_dash], y=df_gr["merma"],
+                    marker_color="#ff6b6b", yaxis="y1",
+                )
+                fig.add_scatter(
+                    name="% Merma s/venta", x=df_gr[nivel_dash], y=df_gr["pct"],
+                    mode="lines+markers", line=dict(color="#64ffda", width=2),
+                    marker=dict(size=7), yaxis="y2",
+                )
+                fig.update_layout(
+                    height=420,
+                    xaxis=dict(tickangle=-30, gridcolor="#1e2130"),
+                    yaxis=dict(title="Merma $", gridcolor="#1e2130"),
+                    yaxis2=dict(title="% Merma", overlaying="y", side="right",
+                                gridcolor="#1e2130", ticksuffix="%"),
+                    margin=dict(b=120), **layout_oscuro,
+                )
+                st.plotly_chart(fig, width="stretch")
 
 
 # ---------------------------------------------------------------------------
@@ -486,67 +661,45 @@ elif pagina == "Análisis":
 elif pagina == "Sucursales":
     st.title("Resumen por sucursal")
 
-    df_conteos = listar_conteos(proyecto)
+    sucursales = listar_sucursales(proyecto)
 
-    if df_conteos.empty:
-        st.info("No hay conteos cargados.")
+    if sucursales.empty:
+        st.info("No hay datos cargados.")
     else:
-        fecha_sel = st.selectbox(
-            "Fecha de conteo",
-            sorted(df_conteos["fecha_conteo"].unique().tolist(), reverse=True)
-        )
+        ctrl = controles_periodo(proyecto, "sucursales")
 
-        modo = st.selectbox(
-            "Modo de ventana",
-            ["conteo_anterior", "periodo_fijo"],
-            format_func=lambda x: "Desde conteo anterior" if x == "conteo_anterior" else "Período fijo"
-        )
-        dias = 90
-        if modo == "periodo_fijo":
-            dias = st.slider("Días hacia atrás", 30, 365, 90)
-
-        if st.button("Calcular todas las sucursales"):
-            sucursales = df_conteos[
-                df_conteos["fecha_conteo"] == fecha_sel
-            ]["codigodepo"].tolist()
-
+        if ctrl and st.button("Calcular todas las sucursales"):
+            merma_cats = categorias_merma(proyecto)
             resultados = []
             progress = st.progress(0)
+            sucs = sucursales["codigodepo"].tolist()
 
-            for i, suc in enumerate(sucursales):
+            for i, suc in enumerate(sucs):
                 try:
-                    df_suc = calcular_merma(proyecto, suc, str(fecha_sel), modo=modo, dias=dias)
-                    venta = df_suc["venta_neta"].sum()
-                    merma = df_suc["merma_total_valorizada"].sum()
-                    resultados.append({
+                    dfx = calcular_merma(proyecto, suc, **ctrl)
+                    fila = {
                         "codigodepo": suc,
-                        "skus":       len(df_suc),
-                        "merma_inv":  df_suc["merma_inv_valorizada"].sum(),
-                        "merma_rem":  df_suc["merma_rem_valorizada"].sum(),
-                        "merma_cs":   df_suc["merma_cs_valorizada"].sum(),
-                        "merma_total": merma,
-                        "venta_neta": venta,
-                        "pct_merma":  (merma / venta * 100) if venta > 0 else None,
-                    })
+                        "skus":       len(dfx),
+                        "merma_total": dfx["merma_total_valorizada"].sum(),
+                        "venta_neta":  dfx["venta_neta"].sum(),
+                    }
+                    for cat in merma_cats:
+                        fila[cat] = merma_por_categoria(dfx, cat).sum()
+                    resultados.append(fila)
                 except Exception as e:
                     st.warning(f"Sucursal {suc}: {e}")
-                progress.progress((i + 1) / len(sucursales))
+                progress.progress((i + 1) / len(sucs))
 
             if resultados:
                 df_res = pd.DataFrame(resultados)
-
-                # Join nombre sucursal
-                conn = get_connection(proyecto)
-                deps = conn.execute("SELECT codigodepo, nombre, abreviacion FROM depositos").df()
-                conn.close()
-                df_res = df_res.merge(deps, on="codigodepo", how="left")
-
+                df_res = df_res.merge(sucursales, on="codigodepo", how="left")
                 st.session_state["df_sucursales"] = df_res
+                st.session_state["cats_merma_suc"] = merma_cats
 
         if "df_sucursales" in st.session_state:
             df_res = st.session_state["df_sucursales"]
+            merma_cats = st.session_state.get("cats_merma_suc", [])
 
-            # Métricas globales
             col1, col2, col3 = st.columns(3)
             col1.metric("Merma total", formatear_pesos(df_res["merma_total"].sum()))
             col2.metric("Venta total", formatear_pesos(df_res["venta_neta"].sum()))
@@ -555,48 +708,40 @@ elif pagina == "Sucursales":
             col3.metric("% Merma global", formatear_pct((merma_t / venta_t * 100) if venta_t > 0 else None))
 
             # Tabla
-            df_display = df_res[[
-                "codigodepo", "nombre", "skus",
-                "merma_inv", "merma_rem", "merma_cs",
-                "merma_total", "venta_neta", "pct_merma"
-            ]].copy()
-
-            for col in ["merma_inv", "merma_rem", "merma_cs", "merma_total", "venta_neta"]:
-                df_display[col] = df_display[col].apply(formatear_pesos)
+            df_res = df_res.copy()
+            df_res["pct_merma"] = (df_res["merma_total"] / df_res["venta_neta"] * 100).where(
+                df_res["venta_neta"] > 0
+            )
+            cols = ["codigodepo", "nombre", "skus"] + merma_cats + ["merma_total", "venta_neta", "pct_merma"]
+            df_display = df_res[cols].copy()
+            for c in merma_cats + ["merma_total", "venta_neta"]:
+                df_display[c] = df_display[c].apply(formatear_pesos)
             df_display["pct_merma"] = df_display["pct_merma"].apply(formatear_pct)
-
-            df_display.columns = [
-                "Código", "Sucursal", "SKUs",
-                "Merma INV", "Merma REM", "Merma CS",
-                "Merma Total", "Venta", "% Merma"
-            ]
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            df_display.columns = (
+                ["Código", "Sucursal", "SKUs"] + [f"{c} $" for c in merma_cats] +
+                ["Merma Total", "Venta", "% Merma"]
+            )
+            st.dataframe(df_display, width="stretch", hide_index=True)
 
             # Gráfico comparativo
-            fig = go.Figure()
-            fig.add_bar(
-                name="INV", x=df_res["nombre"].fillna(df_res["codigodepo"]),
-                y=df_res["merma_inv"], marker_color="#ff6b6b"
-            )
-            fig.add_bar(
-                name="REM", x=df_res["nombre"].fillna(df_res["codigodepo"]),
-                y=df_res["merma_rem"], marker_color="#ffa94d"
-            )
-            fig.add_bar(
-                name="CS", x=df_res["nombre"].fillna(df_res["codigodepo"]),
-                y=df_res["merma_cs"], marker_color="#748ffc"
-            )
-            fig.update_layout(
-                barmode="stack",
-                plot_bgcolor="#0f1117",
-                paper_bgcolor="#0f1117",
-                font=dict(color="#ccd6f6", family="IBM Plex Mono"),
-                xaxis=dict(gridcolor="#1e2130"),
-                yaxis=dict(gridcolor="#1e2130"),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                height=400,
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            if merma_cats:
+                etiquetas = df_res["nombre"].fillna(df_res["codigodepo"])
+                fig = go.Figure()
+                for i, cat in enumerate(merma_cats):
+                    fig.add_bar(
+                        name=cat, x=etiquetas, y=df_res[cat],
+                        marker_color=PALETA[i % len(PALETA)],
+                    )
+                fig.update_layout(
+                    barmode="stack",
+                    plot_bgcolor="#0f1117", paper_bgcolor="#0f1117",
+                    font=dict(color="#ccd6f6", family="IBM Plex Mono"),
+                    xaxis=dict(gridcolor="#1e2130"),
+                    yaxis=dict(gridcolor="#1e2130"),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                    height=400,
+                )
+                st.plotly_chart(fig, width="stretch")
 
 
 # ---------------------------------------------------------------------------
@@ -609,20 +754,8 @@ elif pagina == "Rubros":
     if "df_merma" not in st.session_state:
         st.info("Calculá primero el análisis en la página Análisis.")
     else:
+        # El resultado del análisis ya trae rubro / super_rubro / gran_super_rubro
         df = st.session_state["df_merma"].copy()
-
-        # Join con estructura
-        conn = get_connection(proyecto)
-        arts = conn.execute(
-            "SELECT codigo, rubro FROM articulos"
-        ).df()
-        est = conn.execute(
-            "SELECT rubro, super_rubro, gran_super_rubro FROM estructura"
-        ).df()
-        conn.close()
-
-        df = df.merge(arts, on="codigo", how="left")
-        df = df.merge(est, on="rubro", how="left")
 
         nivel = st.selectbox(
             "Nivel de agrupación",
@@ -649,13 +782,11 @@ elif pagina == "Rubros":
             df_rubro["merma_total"] / df_rubro["venta_total"] * 100
         ).where(df_rubro["venta_total"] > 0)
 
-        # Pareto acumulado
         df_rubro["pct_acumulado"] = (
             df_rubro["merma_total"].cumsum() /
             df_rubro["merma_total"].sum() * 100
         )
 
-        # Gráfico Pareto
         fig = go.Figure()
         fig.add_bar(
             x=df_rubro[nivel].fillna("Sin rubro"),
@@ -689,9 +820,8 @@ elif pagina == "Rubros":
             height=500,
             margin=dict(b=160),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
-        # Tabla
         df_display = df_rubro.copy()
         df_display["merma_total"] = df_display["merma_total"].apply(formatear_pesos)
         df_display["venta_total"] = df_display["venta_total"].apply(formatear_pesos)
@@ -700,4 +830,4 @@ elif pagina == "Rubros":
             lambda x: f"{x:.1f}%" if pd.notna(x) else "—"
         )
         df_display.columns = [nivel.replace("_", " ").title(), "Merma $", "Venta $", "SKUs", "% Merma", "% Acum."]
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        st.dataframe(df_display, width="stretch", hide_index=True)
