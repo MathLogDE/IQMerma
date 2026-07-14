@@ -267,6 +267,21 @@ Políticas de inventario por SKU × sucursal (revisión periódica, order-up-to)
 - Parámetros ajustables: lead time y ciclo default. KPIs, matriz ABC×XYZ,
   top compras sugeridas y descarga Excel/CSV.
 
+### Página Forecast
+
+Proyección mensual de **unidades vendidas** por nivel de agregación (total /
+gran super rubro / rubro / sucursal — a nivel SKU la demanda es errática y
+un forecast puntual sería ruido):
+
+- Modelo transparente: índices estacionales + tendencia robusta (Theil-Sen)
+  **amortiguada** — una caída reciente no se extrapola al infinito.
+- Los **meses atípicos** (lotes mayoristas, anulaciones masivas) se detectan
+  por MAD, no dominan el ajuste y se marcan con ✕ en el gráfico.
+- El **MAPE de backtest** (re-predecir los últimos 3 meses reales) se muestra
+  como medida honesta del error esperado. Banda de confianza ~95%.
+- El valor $ se deriva de las unidades × precio de lista actual promedio.
+- Requiere ≥ 12 meses de historia por grupo (ideal 24 para estacionalidad).
+
 ### Página Sucursales
 
 Mismo rango y valorización, pero calcula la comparativa de **todas las
