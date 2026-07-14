@@ -46,7 +46,7 @@ pip install -r requirements.txt
 python setup_db.py --project nombre_cliente
 
 # Correr la app
-streamlit run ui/app.py
+python -m streamlit run ui/app.py
 ```
 
 ## Guía de uso

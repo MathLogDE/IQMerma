@@ -9,7 +9,7 @@ Estructura de páginas:
     5. Rubros        — Pareto por rubro
 
 Correr con:
-    streamlit run ui/app.py
+    python -m streamlit run ui/app.py
 """
 
 import streamlit as st

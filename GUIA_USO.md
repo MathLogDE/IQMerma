@@ -42,12 +42,21 @@ correr de nuevo sin romper datos.
 ## 3. Correr la app
 
 ```bash
-streamlit run ui/app.py
+python -m streamlit run ui/app.py
 ```
 
-Abre la interfaz en el navegador. En la **barra lateral** elegís el proyecto y
-navegás entre las páginas. Si todavía no hay proyectos, la app te avisa cómo
-crear uno.
+(o doble clic en **`iniciar.bat`**). Abre la interfaz en el navegador. En la
+**barra lateral** elegís el proyecto y navegás entre las páginas. Si todavía
+no hay proyectos, la app te avisa cómo crear uno.
+
+> ⚠️ Usá `python -m streamlit`, **no** `streamlit run ...`: en máquinas con
+> Device Guard / Smart App Control, el `streamlit.exe` de AppData está
+> bloqueado por ser un ejecutable sin firma; `python.exe` (Program Files) sí
+> está permitido y carga streamlit como módulo.
+
+> ⚠️ No corras la app **mientras hay una ingesta en curso**: DuckDB bloquea
+> la base en exclusivo durante la escritura y la app no puede abrirla
+> ("Conflicting lock is held..."). Al terminar la carga se libera solo.
 
 ## 4. La interfaz de un vistazo
 
@@ -414,3 +423,5 @@ conn.close()
 | La página Rubros dice "Calculá primero el análisis" | Corré **Análisis** antes; Rubros reutiliza ese resultado. |
 | Un mes aparece "desparramado" en otros meses, o faltan días > 12 | Fechas con swap día/mes (Excel en locale US convierte `3/11` en 11-mar). La ingesta lo corrige usando el nombre de la pestaña (`11-25` → nov-2025) y avisa cuántas corrigió — pero los datos cargados **antes** del fix hay que recargarlos. |
 | "[ALERTA] Solo X% de las filas caen en el mes principal" al ingestar | El archivo mezcla meses o el formato de fecha no se pudo resolver. Revisar el Excel de origen. |
+| "streamlit.exe ha sido bloqueado por la directiva de Device Guard" | Usá `python -m streamlit run ui/app.py` (o `iniciar.bat`): evita el .exe sin firma de AppData. |
+| "Conflicting lock is held" al abrir la app | Hay una ingesta escribiendo la base. Esperá a que termine (o no ingestes con la app abierta). |
