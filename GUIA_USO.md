@@ -269,9 +269,21 @@ Políticas de inventario por SKU × sucursal (revisión periódica, order-up-to)
 
 ### Página Forecast
 
-Proyección mensual de **unidades vendidas** por nivel de agregación (total /
-gran super rubro / rubro / sucursal — a nivel SKU la demanda es errática y
-un forecast puntual sería ruido):
+Proyección mensual de unidades por nivel de agregación (total / gran super
+rubro / rubro / sucursal — a nivel SKU la demanda es errática y un forecast
+puntual sería ruido). **Métrica elegible**:
+
+- **Ventas** (salida es_venta, valorizada a precio de lista), o
+- **Transferencias recibidas** (Remitido entrante, valorizado a costo) — para
+  planificar el abastecimiento. Con "Superponer" se dibuja la serie real de
+  la otra métrica: si las transferencias caen antes que las ventas, la caída
+  es de **abastecimiento**; si las ventas caen con transferencias normales,
+  es de **demanda**.
+
+> Nota: a nivel "Total", las transferencias recibidas suman los dos
+> escalones (proveedor→CD y CD→sucursal); por sucursal la lectura es directa.
+
+Características del modelo:
 
 - Modelo transparente: índices estacionales + tendencia robusta (Theil-Sen)
   **amortiguada** — una caída reciente no se extrapola al infinito.

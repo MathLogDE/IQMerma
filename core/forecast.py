@@ -37,6 +37,7 @@ import pandas as pd
 from core.merma import _get_connection
 
 NIVELES = ("total", "gran_super_rubro", "rubro", "sucursal")
+METRICAS = ("ventas", "transferencias")
 MIN_MESES = 12
 
 
@@ -44,23 +45,46 @@ MIN_MESES = 12
 # Serie mensual
 # ---------------------------------------------------------------------------
 
-def _serie_mensual(conn, codigodepo: str | None, nivel: str) -> pd.DataFrame:
-    """Unidades vendidas y valor (a precio lista actual) por mes × grupo."""
+def _serie_mensual(conn, codigodepo: str | None, nivel: str,
+                   metrica: str = "ventas") -> pd.DataFrame:
+    """
+    Unidades por mes × grupo, según métrica:
+      - "ventas":          salida neta de categorías es_venta, valorizada a
+                           precio de lista actual.
+      - "transferencias":  unidades RECIBIDAS (categoría Remitido con
+                           diferencia > 0 — solo el lado entrante, para no
+                           netear CD contra sucursal), valorizadas a costo.
+    """
     filtro_depo = "AND m.codigodepo = $depo" if codigodepo else ""
     params = {"depo": codigodepo} if codigodepo else []
 
-    df = conn.execute(f"""
-        SELECT date_trunc('month', m.fecha) AS mes,
-               m.codigo, m.codigodepo,
-               -SUM(m.diferencia) AS unidades
-        FROM movimientos m
-        JOIN tipos_categoria t ON m.tipo = t.tipo AND t.es_venta
-        WHERE 1=1 {filtro_depo}
-        GROUP BY 1, 2, 3
-    """, params).df()
+    if metrica == "ventas":
+        sql = f"""
+            SELECT date_trunc('month', m.fecha) AS mes,
+                   m.codigo, m.codigodepo,
+                   -SUM(m.diferencia) AS unidades
+            FROM movimientos m
+            JOIN tipos_categoria t ON m.tipo = t.tipo AND t.es_venta
+            WHERE 1=1 {filtro_depo}
+            GROUP BY 1, 2, 3
+        """
+        precio_col = "lista_1"
+    else:
+        sql = f"""
+            SELECT date_trunc('month', m.fecha) AS mes,
+                   m.codigo, m.codigodepo,
+                   SUM(m.diferencia) AS unidades
+            FROM movimientos m
+            JOIN tipos_categoria t ON m.tipo = t.tipo AND t.categoria = 'Remitido'
+            WHERE m.diferencia > 0 {filtro_depo}
+            GROUP BY 1, 2, 3
+        """
+        precio_col = "costo"
 
-    df_val = conn.execute("""
-        SELECT codigo, lista_1 FROM stock_sucursal
+    df = conn.execute(sql, params).df()
+
+    df_val = conn.execute(f"""
+        SELECT codigo, {precio_col} AS precio FROM stock_sucursal
         QUALIFY row_number() OVER (
             PARTITION BY codigo
             ORDER BY fecha_snapshot DESC, fecha_ingesta DESC, id DESC
@@ -70,7 +94,7 @@ def _serie_mensual(conn, codigodepo: str | None, nivel: str) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=["mes", "grupo", "unidades", "valor"])
 
-    val = df_val.set_index("codigo")["lista_1"].astype(float)
+    val = df_val.set_index("codigo")["precio"].astype(float)
     df["valor"] = (df["unidades"] * df["codigo"].map(val)).fillna(0.0)
 
     # grupo según nivel
@@ -189,15 +213,37 @@ def _mape(reales: np.ndarray, previstos: np.ndarray) -> float | None:
 # Función principal
 # ---------------------------------------------------------------------------
 
+def serie_mensual_real(
+    proyecto: str,
+    codigodepo: str | None = None,
+    nivel: str = "total",
+    metrica: str = "ventas",
+) -> pd.DataFrame:
+    """Serie mensual real (sin proyección) — para superponer métricas en la UI."""
+    if nivel not in NIVELES:
+        raise ValueError(f"nivel debe ser uno de {NIVELES}, no '{nivel}'")
+    if metrica not in METRICAS:
+        raise ValueError(f"metrica debe ser una de {METRICAS}, no '{metrica}'")
+    conn = _get_connection(proyecto)
+    try:
+        base = _serie_mensual(conn, codigodepo, nivel, metrica)
+    finally:
+        conn.close()
+    if not base.empty:
+        base["mes"] = pd.to_datetime(base["mes"]).dt.strftime("%Y-%m")
+    return base
+
+
 def forecast_ventas(
     proyecto: str,
     codigodepo: str | None = None,
     nivel: str = "total",
     horizonte: int = 6,
     backtest: int = 3,
+    metrica: str = "ventas",
 ) -> pd.DataFrame:
     """
-    Proyección mensual de unidades vendidas por grupo.
+    Proyección mensual de unidades por grupo.
 
     Args:
         proyecto:   Nombre del proyecto
@@ -207,21 +253,28 @@ def forecast_ventas(
         horizonte:  Meses a proyectar
         backtest:   Meses finales reservados para medir el error (MAPE).
                     0 = sin backtest.
+        metrica:    "ventas" (salida es_venta, a precio lista) o
+                    "transferencias" (Remitido recibido, a costo) — proyectar
+                    transferencias sirve para planificar el abastecimiento
+                    del CD, y compararlas contra ventas muestra si una caída
+                    de venta es de demanda o de abastecimiento.
 
     Returns:
-        DataFrame largo: grupo, mes, tipo ('real'/'ajuste'/'forecast'),
-        unidades, banda_inf, banda_sup, valor (unidades × precio lista
-        actual promedio del grupo).
-        attrs: "mape" (dict por grupo), "grupos_excluidos" (historia corta).
+        DataFrame largo: grupo, mes, tipo ('real'/'forecast'), unidades,
+        banda_inf, banda_sup, valor (unidades × precio promedio del grupo).
+        attrs: "mape" (dict por grupo), "grupos_excluidos" (historia corta),
+        "meses_atipicos", "metrica".
     """
     if nivel not in NIVELES:
         raise ValueError(f"nivel debe ser uno de {NIVELES}, no '{nivel}'")
+    if metrica not in METRICAS:
+        raise ValueError(f"metrica debe ser una de {METRICAS}, no '{metrica}'")
     if horizonte < 1:
         raise ValueError("horizonte debe ser >= 1")
 
     conn = _get_connection(proyecto)
     try:
-        base = _serie_mensual(conn, codigodepo, nivel)
+        base = _serie_mensual(conn, codigodepo, nivel, metrica)
     finally:
         conn.close()
 
@@ -279,4 +332,5 @@ def forecast_ventas(
     res.attrs["mape"] = mapes
     res.attrs["grupos_excluidos"] = excluidos
     res.attrs["meses_atipicos"] = atipicos_all
+    res.attrs["metrica"] = metrica
     return res

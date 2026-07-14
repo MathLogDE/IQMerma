@@ -39,7 +39,7 @@ from core.control_merma import (
 from core.politicas_stock import (
     calcular_politicas, resumen_politicas, ESTADOS_POLITICA,
 )
-from core.forecast import forecast_ventas, NIVELES
+from core.forecast import forecast_ventas, serie_mensual_real, NIVELES, METRICAS
 
 
 # ---------------------------------------------------------------------------
@@ -1442,6 +1442,10 @@ elif pagina == "Forecast":
         "total": "Total", "gran_super_rubro": "Gran Super Rubro",
         "rubro": "Rubro", "sucursal": "Sucursal",
     }
+    ETIQUETA_METRICA = {
+        "ventas": "Ventas (salida)",
+        "transferencias": "Transferencias recibidas",
+    }
     sucursales = listar_sucursales(proyecto)
 
     if sucursales.empty:
@@ -1449,35 +1453,57 @@ elif pagina == "Forecast":
     else:
         TODAS_F = "__todas__"
         suc_label = dict(zip(sucursales["codigodepo"], sucursales["nombre"].fillna("")))
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
+            metrica = st.selectbox(
+                "Métrica a proyectar", list(METRICAS),
+                format_func=lambda m: ETIQUETA_METRICA[m], key="fc_metrica",
+                help="Proyectar transferencias sirve para planificar el "
+                     "abastecimiento; compararlas contra ventas muestra si "
+                     "una caída de venta es de demanda o de abastecimiento.",
+            )
+        with c2:
             nivel = st.selectbox(
                 "Nivel de agregación", list(NIVELES),
                 format_func=lambda n: ETIQUETA_NIVEL[n], key="fc_nivel",
             )
-        with c2:
+        with c3:
             suc_sel = st.selectbox(
                 "Sucursal", [TODAS_F] + sucursales["codigodepo"].tolist(),
                 format_func=lambda c: ("⊕ Todas" if c == TODAS_F
                                        else f"{c} — {suc_label.get(c, '')}".strip(" —")),
                 key="fc_suc", disabled=(nivel == "sucursal"),
             )
-        with c3:
+        with c4:
             horizonte = st.selectbox(
                 "Horizonte", [3, 6, 12], index=1,
                 format_func=lambda h: f"{h} meses", key="fc_hor",
             )
 
+        superponer = st.checkbox(
+            f"Superponer la serie real de "
+            f"{'transferencias' if metrica == 'ventas' else 'ventas'}",
+            value=True, key="fc_overlay",
+            help="Si las transferencias caen antes que las ventas, la caída "
+                 "es de abastecimiento, no de demanda.",
+        )
+
         if st.button("Proyectar"):
             with st.spinner("Proyectando..."):
                 try:
+                    depo = (None if (suc_sel == TODAS_F or nivel == "sucursal")
+                            else suc_sel)
                     df_fc = forecast_ventas(
-                        proyecto,
-                        codigodepo=(None if (suc_sel == TODAS_F or nivel == "sucursal")
-                                    else suc_sel),
+                        proyecto, codigodepo=depo,
                         nivel=nivel, horizonte=horizonte, backtest=3,
+                        metrica=metrica,
                     )
                     st.session_state["df_fc"] = df_fc
+                    otra = "transferencias" if metrica == "ventas" else "ventas"
+                    st.session_state["df_fc_otra"] = serie_mensual_real(
+                        proyecto, codigodepo=depo, nivel=nivel, metrica=otra,
+                    )
+                    st.session_state["fc_otra_nombre"] = ETIQUETA_METRICA[otra]
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -1545,6 +1571,18 @@ elif pagina == "Forecast":
                         mode="markers",
                         marker=dict(size=11, color="#ff6b6b", symbol="x"),
                     )
+                if superponer and "df_fc_otra" in st.session_state:
+                    df_o = st.session_state["df_fc_otra"]
+                    if not df_o.empty:
+                        df_og = (df_o[df_o["grupo"] == grupo_sel]
+                                 .sort_values("mes"))
+                        if not df_og.empty:
+                            fig.add_scatter(
+                                name=st.session_state.get("fc_otra_nombre", "Otra métrica"),
+                                x=df_og["mes"], y=df_og["unidades"],
+                                mode="lines",
+                                line=dict(color="#748ffc", width=1.5, dash="dot"),
+                            )
                 fig.add_scatter(
                     name="Forecast", x=fc["mes"], y=fc["unidades"],
                     mode="lines+markers",
