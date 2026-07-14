@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Alcance: <b>{{ meta.sucursal }}</b></span>
+    <span>Stock al: <b>{{ meta.fecha_stock }}</b></span>
+    <span>Demanda: últimos <b>{{ meta.dias_ventana }} días</b></span>
+    <span>Banda saludable: <b>{{ meta.banda }}</b></span>
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    <div class="kpi alerta"><div class="etiqueta">Quiebres</div>
+        <div class="valor">{{ kpi.quiebres | unidades }}</div>
+        <div class="detalle">pierden {{ kpi.venta_perdida | pesos }}/día</div></div>
+    <div class="kpi"><div class="etiqueta">Stock muerto</div>
+        <div class="valor">{{ kpi.muerto_valor | pesos }}</div>
+        <div class="detalle">{{ kpi.muertos | unidades }} SKU-sucursal</div></div>
+    <div class="kpi"><div class="etiqueta">Sobrestock</div>
+        <div class="valor">{{ kpi.sobre_valor | pesos }}</div>
+        <div class="detalle">{{ kpi.sobres | unidades }} SKU-sucursal</div></div>
+    <div class="kpi"><div class="etiqueta">Cobertura mediana</div>
+        <div class="valor">{{ kpi.cobertura }}</div>
+        <div class="detalle">capital total {{ kpi.capital | pesos }}</div></div>
+</div>
+
+<div class="seccion">
+    <h2>Resumen por estado</h2>
+    <table>
+        <thead><tr><th>Estado</th><th class="num">SKU-sucursal</th><th class="num">Capital $</th>
+            <th class="barra-celda"></th></tr></thead>
+        <tbody>
+        {% for e in estados %}
+        <tr>
+            <td>{{ e.nombre }}</td>
+            <td class="num">{{ e.n | unidades }}</td>
+            <td class="num">{{ e.valor | pesos }}</td>
+            <td class="barra-celda"><div class="barra gris" style="width: {{ e.valor_w }}%"></div></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if quiebres %}
+<div class="seccion">
+    <h2>Top {{ quiebres | length }} quiebres por venta perdida</h2>
+    <table>
+        <thead><tr><th>Código</th><th>Descripción</th><th>Rubro</th><th>Suc.</th>
+            <th class="num">Venta/día</th><th class="num">Perdida $/día</th></tr></thead>
+        <tbody>
+        {% for q in quiebres %}
+        <tr>
+            <td>{{ q.codigo }}</td><td>{{ q.descripcion }}</td><td>{{ q.rubro }}</td>
+            <td>{{ q.suc }}</td>
+            <td class="num">{{ q.venta_diaria }}</td>
+            <td class="num rojo">{{ q.perdida | pesos }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if muertos %}
+<div class="seccion">
+    <h2>Top {{ muertos | length }} stock muerto por capital inmovilizado</h2>
+    <table>
+        <thead><tr><th>Código</th><th>Descripción</th><th>Rubro</th><th>Suc.</th>
+            <th class="num">Stock</th><th class="num">Capital $</th></tr></thead>
+        <tbody>
+        {% for m in muertos %}
+        <tr>
+            <td>{{ m.codigo }}</td><td>{{ m.descripcion }}</td><td>{{ m.rubro }}</td>
+            <td>{{ m.suc }}</td>
+            <td class="num">{{ m.stock | unidades }}</td>
+            <td class="num rojo">{{ m.valor | pesos }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

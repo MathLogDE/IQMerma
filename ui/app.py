@@ -31,7 +31,11 @@ from core.merma import (
     calcular_merma, merma_por_sucursal,
     listar_categorias, listar_fechas_valorizacion,
 )
-from core.reporte import generar_reporte
+from core.reporte import (
+    generar_reporte, generar_reporte_control, generar_reporte_salud,
+    generar_reporte_politicas, generar_reporte_forecast,
+    cargar_branding, guardar_branding,
+)
 from core.salud_stock import analizar_stock, resumen_salud, ESTADOS
 from core.control_merma import (
     evolucion_mensual, movimientos_outliers, ajustes_por_usuario,
@@ -452,8 +456,8 @@ if pagina == "Inicio":
 elif pagina == "Ingesta":
     st.title("Ingesta de datos")
 
-    tab1, tab2, tab3 = st.tabs(
-        ["📋 Períodos cargados", "📁 Cargar archivo", "⚙ Depósitos"]
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📋 Períodos cargados", "📁 Cargar archivo", "⚙ Depósitos", "🎨 Cliente"]
     )
 
     with tab1:
@@ -606,6 +610,48 @@ elif pagina == "Ingesta":
                     conn.close()
                     st.success(f"✓ {len(cambios)} depósitos actualizados")
                     st.rerun()
+
+    with tab4:
+        st.markdown("#### Marca del cliente en los reportes imprimibles")
+        st.caption(
+            "El logo y los datos aparecen en el encabezado de todos los "
+            "reportes; el color de acento tiñe títulos, KPIs y barras. "
+            "Se guarda junto a la base del proyecto (fuera de git)."
+        )
+        br = cargar_branding(proyecto)
+
+        b1, b2 = st.columns([2, 1])
+        with b1:
+            br_nombre = st.text_input("Nombre del cliente", value=br["nombre"],
+                                      key="br_nombre")
+            br_datos = st.text_area(
+                "Datos (una línea por dato: razón social, CUIT, contacto…)",
+                value="\n".join(br["datos"]), height=100, key="br_datos",
+            )
+            br_pie = st.text_input(
+                "Pie de página", value=br["pie"],
+                placeholder="MermaIQ — análisis de inventario", key="br_pie",
+            )
+        with b2:
+            br_color = st.color_picker("Color de acento",
+                                       value=br["color"] or "#c0392b", key="br_color")
+            logo_file = st.file_uploader("Logo (PNG/JPG)", type=["png", "jpg", "jpeg"],
+                                         key="br_logo")
+            if br["logo_uri"] and not logo_file:
+                st.image(br["logo_uri"], caption="Logo actual", width=160)
+
+        if st.button("Guardar marca", key="br_save"):
+            logo_bytes, logo_ext = None, ".png"
+            if logo_file is not None:
+                logo_bytes = logo_file.read()
+                logo_ext = Path(logo_file.name).suffix or ".png"
+            guardar_branding(
+                proyecto, nombre=br_nombre, datos=br_datos,
+                color=br_color, pie=br_pie,
+                logo_bytes=logo_bytes, logo_ext=logo_ext,
+            )
+            st.success("✓ Marca guardada — se aplica a todos los reportes")
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -915,6 +961,15 @@ elif pagina == "Control de merma":
                         top_n=100, **comunes)
                     st.session_state["ctrl_us"] = ajustes_por_usuario(
                         proyecto, ctrl["fecha_desde"], ctrl["fecha_hasta"], **comunes)
+                    st.session_state["ctrl_meta"] = {
+                        "proyecto": proyecto,
+                        "sucursal": ("Todas las sucursales" if suc_sel == TODAS_C
+                                     else f"{suc_sel} — {suc_label.get(suc_sel, '')}".strip(" —")),
+                        "fecha_desde": ctrl["fecha_desde"],
+                        "fecha_hasta": ctrl["fecha_hasta"],
+                        "modo": ctrl["modo_valorizacion"],
+                        "fecha_valorizacion": ctrl["fecha_valorizacion"] or "—",
+                    }
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -1030,6 +1085,22 @@ elif pagina == "Control de merma":
                                     "Faltante $", "Sobrante $", "Neto $", "% Falt."]
                     st.dataframe(df_u, width="stretch", hide_index=True, height=380)
                 botones_descarga(us, "merma_por_usuario", "us")
+
+        # --- Reporte imprimible ------------------------------------------------
+        if "ctrl_meta" in st.session_state and "ctrl_ev" in st.session_state:
+            st.markdown("---")
+            meta_c = st.session_state["ctrl_meta"]
+            html_c = generar_reporte_control(
+                proyecto, meta_c,
+                st.session_state.get("ctrl_ev"),
+                st.session_state.get("ctrl_out"),
+                st.session_state.get("ctrl_us"),
+            )
+            st.download_button(
+                "🖨 Descargar reporte (HTML imprimible)", html_c.encode("utf-8"),
+                f"control_merma_{meta_c['fecha_desde']}_{meta_c['fecha_hasta']}.html",
+                "text/html", key="dl_rep_control",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1236,6 +1307,23 @@ elif pagina == "Salud de stock":
                                   **layout_oscuro)
                 st.plotly_chart(fig, width="stretch")
 
+            # --- Reporte imprimible --------------------------------------------
+            st.markdown("---")
+            meta_s = {
+                "proyecto": proyecto,
+                "sucursal": ("Todas las sucursales" if suc_sel == TODAS_S
+                             else f"{suc_sel} — {suc_label.get(suc_sel, '')}".strip(" —")),
+                "fecha_stock": df_full.attrs.get("fecha_stock", ""),
+                "dias_ventana": df_full.attrs.get("dias_ventana", ""),
+                "banda": f"{banda[0]}–{banda[1]} días",
+            }
+            html_s = generar_reporte_salud(proyecto, meta_s, df, r, ETIQUETA_ESTADO)
+            st.download_button(
+                "🖨 Descargar reporte (HTML imprimible)", html_s.encode("utf-8"),
+                f"salud_stock_{meta_s['fecha_stock']}.html",
+                "text/html", key="dl_rep_salud",
+            )
+
 
 # ---------------------------------------------------------------------------
 # Página: MIN / OPT / MAX
@@ -1423,6 +1511,23 @@ elif pagina == "Min / Opt / Max":
                                       **layout_oscuro)
                     st.plotly_chart(fig, width="stretch")
 
+            # --- Reporte imprimible --------------------------------------------
+            st.markdown("---")
+            meta_p = {
+                "proyecto": proyecto,
+                "sucursal": ("Todas las sucursales" if suc_sel == TODAS_P
+                             else f"{suc_sel} — {suc_label.get(suc_sel, '')}".strip(" —")),
+                "fecha_stock": df_full.attrs.get("fecha_stock", ""),
+                "dias_demanda": df_full.attrs.get("dias_demanda", ""),
+                "lead_time": f"{df_full.attrs.get('lead_time_dias', 0):.0f}",
+            }
+            html_p = generar_reporte_politicas(proyecto, meta_p, df, r)
+            st.download_button(
+                "🖨 Descargar reporte (HTML imprimible)", html_p.encode("utf-8"),
+                f"politicas_stock_{meta_p['fecha_stock']}.html",
+                "text/html", key="dl_rep_pol",
+            )
+
 
 # ---------------------------------------------------------------------------
 # Página: FORECAST
@@ -1609,6 +1714,23 @@ elif pagina == "Forecast":
                 )
                 botones_descarga(
                     df_fc[df_fc["tipo"] == "forecast"], "forecast_ventas", "fc")
+
+                meta_f = {
+                    "proyecto": proyecto,
+                    "metrica": ETIQUETA_METRICA.get(
+                        df_fc.attrs.get("metrica", "ventas"), "Ventas"),
+                    "nivel": ETIQUETA_NIVEL.get(nivel, nivel),
+                    "sucursal": ("Todas" if (suc_sel == TODAS_F or nivel == "sucursal")
+                                 else f"{suc_sel} — {suc_label.get(suc_sel, '')}".strip(" —")),
+                    "horizonte": horizonte,
+                }
+                html_f = generar_reporte_forecast(
+                    proyecto, meta_f, df_fc, grupo_detalle=grupo_sel)
+                st.download_button(
+                    "🖨 Descargar reporte (HTML imprimible)", html_f.encode("utf-8"),
+                    f"forecast_{meta_f['horizonte']}m.html",
+                    "text/html", key="dl_rep_fc",
+                )
 
                 if excluidos:
                     st.caption(

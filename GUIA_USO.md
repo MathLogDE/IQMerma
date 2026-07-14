@@ -225,6 +225,19 @@ valorización):
 
 Todo descargable en Excel/CSV.
 
+### Reportes imprimibles con la marca del cliente
+
+Cada página de análisis (Análisis, Control de merma, Salud de stock,
+Min/Opt/Max y Forecast) tiene su botón **🖨 Descargar reporte**: un HTML
+autocontenido A4 que se abre en el navegador y se imprime o guarda como PDF
+con Ctrl+P.
+
+En **Ingesta → 🎨 Cliente** se configura la marca que llevan todos los
+reportes: **logo** (PNG/JPG, embebido en el HTML), nombre del cliente, datos
+(razón social, CUIT, contacto — una línea por dato), **color de acento** y pie
+de página. Se guarda en `projects/<proyecto>/` (junto a su base, fuera de
+git), así cada cliente tiene su propia identidad.
+
 ### Ingesta → ⚙ Depósitos
 
 Editor para marcar los **centros de logística** (`es_logistica`) desde la UI.

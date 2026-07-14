@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>{{ titulo }} — {{ branding.nombre or meta.proyecto }}</title>
+<style>
+    :root {
+        --tinta:   #1a2233;
+        --gris:    #5b6472;
+        --linea:   #d9dee6;
+        --fondo:   #f4f6f9;
+        --acento:  {{ branding.color or '#c0392b' }};
+        --naranja: #d68910;
+        --azul:    #2e5aac;
+        --verde:   #1e8449;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: "Segoe UI", Arial, sans-serif;
+        color: var(--tinta);
+        font-size: 10.5pt;
+        line-height: 1.45;
+        padding: 24px 32px;
+        max-width: 900px;
+        margin: 0 auto;
+    }
+    @page { size: A4; margin: 14mm 12mm; }
+    @media print {
+        body { padding: 0; max-width: none; }
+        .seccion { break-inside: avoid; }
+        a { color: inherit; text-decoration: none; }
+    }
+
+    /* --- encabezado --- */
+    header {
+        border-bottom: 3px solid var(--acento);
+        padding-bottom: 12px; margin-bottom: 18px;
+        display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+    }
+    header .titulos h1 { font-size: 16pt; letter-spacing: -0.02em; }
+    header .titulos h1 span { color: var(--acento); }
+    header .cliente { font-size: 10pt; font-weight: 600; margin-top: 2px; }
+    header img.logo { max-height: 52px; max-width: 190px; object-fit: contain; }
+    .meta { display: flex; flex-wrap: wrap; gap: 4px 26px; margin: 0 0 14px; color: var(--gris); font-size: 9pt; }
+    .meta b { color: var(--tinta); font-weight: 600; }
+
+    /* --- KPIs --- */
+    .kpis { display: flex; gap: 10px; margin: 14px 0 20px; }
+    .kpi { flex: 1; background: var(--fondo); border: 1px solid var(--linea); border-radius: 6px; padding: 10px 12px; }
+    .kpi .etiqueta { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.08em; color: var(--gris); }
+    .kpi .valor { font-size: 13.5pt; font-weight: 700; margin-top: 2px; }
+    .kpi .detalle { font-size: 8pt; color: var(--gris); }
+    .kpi.alerta .valor { color: var(--acento); }
+
+    /* --- secciones y tablas --- */
+    .seccion { margin-bottom: 22px; }
+    .seccion h2 {
+        font-size: 11.5pt; margin-bottom: 8px; padding-bottom: 4px;
+        border-bottom: 1.5px solid var(--linea);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 8.8pt; }
+    th {
+        text-align: left; font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--gris); padding: 5px 8px; border-bottom: 1.5px solid var(--tinta);
+    }
+    td { padding: 4px 8px; border-bottom: 1px solid var(--linea); vertical-align: middle; }
+    tr:nth-child(even) td { background: #fafbfd; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .rojo { color: var(--acento); font-weight: 600; }
+    tfoot td { border-top: 2px solid var(--tinta); border-bottom: none; font-weight: 700; background: var(--fondo) !important; }
+
+    /* --- barras CSS --- */
+    .barra-celda { min-width: 110px; }
+    .barra { height: 9px; border-radius: 3px; background: var(--acento); min-width: 2px; }
+    .barra.venta { background: var(--azul); }
+    .barra.gris  { background: var(--gris); }
+
+    footer {
+        margin-top: 26px; padding-top: 8px; border-top: 1px solid var(--linea);
+        color: var(--gris); font-size: 8pt; display: flex; justify-content: space-between;
+    }
+</style>
+</head>
+<body>
+
+<header>
+    <div class="titulos">
+        <h1>Merma<span>IQ</span> — {{ titulo }}</h1>
+        {% if branding.nombre %}<div class="cliente">{{ branding.nombre }}</div>{% endif %}
+        {% for linea in branding.datos %}
+        <div style="font-size:8.5pt;color:var(--gris)">{{ linea }}</div>
+        {% endfor %}
+    </div>
+    {% if branding.logo_uri %}<img class="logo" src="{{ branding.logo_uri }}" alt="logo">{% endif %}
+</header>
+
+<div class="meta">
+    {% block metadatos %}{% endblock %}
+</div>
+
+{% block cuerpo %}{% endblock %}
+
+<footer>
+    <span>{{ branding.pie or "MermaIQ — análisis de inventario" }}</span>
+    <span>Generado el {{ meta.generado }}</span>
+</footer>
+
+</body>
+</html>
