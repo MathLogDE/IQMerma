@@ -381,3 +381,5 @@ conn.close()
 | Columna **"(sin categoría)"** con valores | Hay subtipos de movimiento que no están en `tipos_categoria`. Agregalos al catálogo. |
 | Merma valorizada en 0 pese a haber faltantes | El SKU no tiene snapshot de stock ≤ fecha hasta → no se puede valorizar. Cargá un stock que cubra el período. |
 | La página Rubros dice "Calculá primero el análisis" | Corré **Análisis** antes; Rubros reutiliza ese resultado. |
+| Un mes aparece "desparramado" en otros meses, o faltan días > 12 | Fechas con swap día/mes (Excel en locale US convierte `3/11` en 11-mar). La ingesta lo corrige usando el nombre de la pestaña (`11-25` → nov-2025) y avisa cuántas corrigió — pero los datos cargados **antes** del fix hay que recargarlos. |
+| "[ALERTA] Solo X% de las filas caen en el mes principal" al ingestar | El archivo mezcla meses o el formato de fecha no se pudo resolver. Revisar el Excel de origen. |

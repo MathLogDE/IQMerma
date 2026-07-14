@@ -112,11 +112,104 @@ def _validar_columnas(df: pd.DataFrame) -> list[str]:
     return sorted(obligatorias - presentes)
 
 
-def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
+def _periodo_de_hoja(sheet) -> tuple[int, int] | None:
+    """
+    Deduce (año, mes) del nombre de la pestaña: '11-25', '11-2025',
+    '2025-11', '01_26', etc. Retorna None si no matchea.
+    """
+    import re
+    if not isinstance(sheet, str):
+        return None
+    m = re.fullmatch(r"\s*(\d{1,4})[-/_](\d{1,4})\s*", sheet)
+    if not m:
+        return None
+    a, b = int(m.group(1)), int(m.group(2))
+    if 1 <= a <= 12:            # MM-YY / MM-YYYY
+        mes, anio = a, b
+    elif 1 <= b <= 12:          # YYYY-MM / YY-MM
+        mes, anio = b, a
+    else:
+        return None
+    if anio < 100:
+        anio += 2000
+    if not (2000 <= anio <= 2100):
+        return None
+    return anio, mes
+
+
+def _parsear_fechas(serie: pd.Series, esperado: tuple[int, int] | None):
+    """
+    Parsea FECHA tolerando formatos mixtos y corrigiendo swaps día/mes.
+
+    El caso real que motiva esto: un Excel "trabajado" en locale US guarda
+    '3/11/2025' (3-nov) como datetime 11-mar (swap), mientras los días >12
+    quedan como texto DD/MM. Un parseo ingenuo desparrama el mes por todo el
+    año y descarta filas.
+
+    Estrategia por celda, en orden de prioridad:
+      1. ISO (celdas datetime nativas: 'YYYY-MM-DD ...')
+      2. texto DD/MM/YYYY
+      3. texto MM/DD/YYYY
+      4. swap del ISO (día<->mes) — solo si cae en el período esperado
+    Si hay período esperado (nombre de la pestaña o mes modal de las fechas
+    inequívocas, día>12), toda celda con un candidato dentro del período lo
+    usa; el swap solo se acepta con período esperado.
+
+    Returns:
+        (fechas: Series[datetime], corregidas: int) — corregidas = celdas
+        donde se aplicó el des-swap.
+    """
+    s = serie.astype("string").str.strip()
+
+    iso  = pd.to_datetime(s, format="ISO8601", errors="coerce")
+    ddmm = pd.to_datetime(s, format="%d/%m/%Y", errors="coerce")
+    mmdd = pd.to_datetime(s, format="%m/%d/%Y", errors="coerce")
+
+    # candidato "des-swapeado" del ISO (11-mar → 3-nov)
+    iso_swap = pd.to_datetime(
+        pd.DataFrame({
+            "year": iso.dt.year, "month": iso.dt.day, "day": iso.dt.month,
+        }),
+        errors="coerce",
+    )
+
+    fechas = iso.fillna(ddmm).fillna(mmdd)
+
+    # período esperado: pestaña, o mes modal de las fechas inequívocas (día>12)
+    if esperado is None:
+        inequivocas = fechas[fechas.dt.day > 12]
+        if len(inequivocas) >= 10:
+            modal = inequivocas.dt.to_period("M").mode()
+            if len(modal):
+                esperado = (modal[0].year, modal[0].month)
+
+    corregidas = 0
+    if esperado is not None:
+        anio, mes = esperado
+
+        def en_periodo(cand):
+            return cand.notna() & (cand.dt.year == anio) & (cand.dt.month == mes)
+
+        eleccion = fechas.copy()
+        ok = en_periodo(eleccion)
+        for cand, es_swap in ((iso, False), (ddmm, False), (mmdd, False), (iso_swap, True)):
+            mejora = ~ok & en_periodo(cand)
+            if mejora.any():
+                eleccion[mejora] = cand[mejora]
+                if es_swap:
+                    corregidas += int(mejora.sum())
+                ok |= mejora
+        fechas = eleccion
+
+    return fechas, corregidas
+
+
+def _normalizar(df: pd.DataFrame,
+                periodo_esperado: tuple[int, int] | None = None) -> pd.DataFrame:
     """
     Transforma el DataFrame crudo en el formato interno de MermaIQ:
       - Renombra columnas
-      - Parsea fechas (formato DD/M/YYYY del ERP)
+      - Parsea fechas (formatos mixtos, con corrección de swap día/mes)
       - Convierte COSTO de coma decimal a float
       - Convierte INGRESO/EGRESO a numérico
       - Recalcula DIFERENCIA internamente (no confiar en el ERP)
@@ -134,15 +227,26 @@ def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].str.strip().replace("nan", None)
 
-    # Parsear fecha — formato DD/M/YYYY o DD/MM/YYYY
-    df["fecha"] = pd.to_datetime(df["fecha"], dayfirst=True, errors="coerce")
+    # Parsear fecha — formatos mixtos + corrección de swap día/mes
+    df["fecha"], corregidas = _parsear_fechas(df["fecha"], periodo_esperado)
+    if corregidas > 0:
+        print(f"  [warn] {corregidas} fechas corregidas por swap día/mes "
+              f"(datetimes de Excel en locale US)")
 
     # Eliminar filas sin fecha (encabezados repetidos, filas vacías, etc.)
     filas_antes = len(df)
     df = df.dropna(subset=["fecha"])
     filas_descartadas = filas_antes - len(df)
     if filas_descartadas > 0:
-        print(f"  [info] {filas_descartadas} filas descartadas (sin fecha válida)")
+        print(f"  [warn] {filas_descartadas} filas descartadas (sin fecha válida)")
+
+    # Sanidad: las filas deberían concentrarse en un solo mes
+    if len(df):
+        meses = df["fecha"].dt.to_period("M")
+        share_modal = (meses == meses.mode()[0]).mean()
+        if share_modal < 0.95:
+            print(f"  [ALERTA] Solo {share_modal:.0%} de las filas caen en el mes "
+                  f"principal ({meses.mode()[0]}) — revisar formato de fechas del archivo.")
 
     # Convertir COSTO: coma decimal argentina → float
     # "7437,933884" → 7437.933884
@@ -295,9 +399,13 @@ def ingestar_movimientos(
     if faltantes:
         raise ValueError(f"Columnas obligatorias faltantes: {faltantes}")
 
-    # 3. Normalizar
+    # 3. Normalizar (el nombre de la pestaña define el período esperado
+    #    para validar/corregir las fechas)
     print("  Normalizando datos...")
-    df = _normalizar(df_crudo)
+    periodo_esperado = _periodo_de_hoja(sheet)
+    if periodo_esperado:
+        print(f"  Período esperado (pestaña): {periodo_esperado[0]}-{periodo_esperado[1]:02d}")
+    df = _normalizar(df_crudo, periodo_esperado)
     print(f"  Filas válidas: {len(df)}")
 
     # 4. Resumen previo a la carga
