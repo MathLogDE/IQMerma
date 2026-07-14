@@ -436,7 +436,57 @@ def generar_reporte_politicas(
 
 
 # ---------------------------------------------------------------------------
-# 5. Forecast
+# 5. Transferencias
+# ---------------------------------------------------------------------------
+
+def generar_reporte_transferencias(
+    proyecto: str,
+    meta: dict,
+    df: pd.DataFrame,
+) -> str:
+    """
+    Reporte operativo de transferencias: una sección por ruta origen→destino
+    con la lista de SKUs a enviar (y columna ✓ para tildar en papel).
+    """
+    kpi = {
+        "skus":     int(df["codigo"].nunique()) if not df.empty else 0,
+        "unidades": float(df["unidades"].sum()) if not df.empty else 0.0,
+        "valor":    float(df["valor"].sum()) if not df.empty else 0.0,
+    }
+
+    rutas = []
+    if not df.empty:
+        for (og, ogn, de, den), g in df.groupby(
+                ["origen", "origen_nombre", "destino", "destino_nombre"]):
+            items = [{
+                "codigo":        i["codigo"],
+                "descripcion":   (i["descripcion"] or "")[:44] if pd.notna(i["descripcion"]) else "",
+                "rubro":         i["rubro"] if pd.notna(i["rubro"]) else "",
+                "abc":           i["clase_abc"],
+                "unidades":      i["unidades"],
+                "valor":         i["valor"],
+                "stock_origen":  i["stock_origen"],
+                "stock_destino": i["stock_destino"],
+            } for _, i in g.sort_values("valor", ascending=False).iterrows()]
+            rutas.append({
+                "origen":   f"{og} — {ogn}" if pd.notna(ogn) else og,
+                "destino":  f"{de} — {den}" if pd.notna(den) else de,
+                "lineas":   items,
+                "unidades": float(g["unidades"].sum()),
+                "valor":    float(g["valor"].sum()),
+            })
+        rutas.sort(key=lambda r: -r["valor"])
+
+    meta = dict(meta)
+    meta["n_sugerencias"] = len(df)
+    return _render(
+        "reporte_transferencias.html", proyecto, "Transferencias sugeridas",
+        meta, kpi=kpi, rutas=rutas,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. Forecast
 # ---------------------------------------------------------------------------
 
 def generar_reporte_forecast(

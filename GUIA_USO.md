@@ -280,6 +280,24 @@ Políticas de inventario por SKU × sucursal (revisión periódica, order-up-to)
 - Parámetros ajustables: lead time y ciclo default. KPIs, matriz ABC×XYZ,
   top compras sugeridas y descarga Excel/CSV.
 
+### Página Transferencias
+
+Sugerencias de **redistribución lateral** entre sucursales: SKUs en exceso en
+una sucursal que otra necesita reponer. Reglas: el donante nunca baja de su
+nivel óptimo; los receptores clase A tienen prioridad; los depósitos
+logísticos quedan fuera (CD→sucursal es la reposición normal). Muestra KPIs
+(unidades y valor a costo que se reponen **sin comprar**), tabla filtrable,
+matriz origen×destino y un **reporte imprimible operativo** por ruta (lista
+de picking con columna ✓).
+
+### Página Márgenes
+
+Margen teórico (lista vs costo) y margen bruto del período por SKU / gran
+super rubro, con el KPI **merma como % del margen** (cuánto de lo que el
+producto deja se pierde en merma). Incluye la sección **evolución de costos**
+(inflación de reposición por rubro), que se activa cuando hay ≥ 2 snapshots
+de stock cargados — otro motivo para cargar stock con cadencia semanal.
+
 ### Página Forecast
 
 Proyección mensual de unidades por nivel de agregación (total / gran super
