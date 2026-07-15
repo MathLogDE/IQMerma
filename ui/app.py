@@ -27,26 +27,24 @@ sys.path.insert(0, str(ROOT))
 import io
 
 from setup_db import get_db_path, get_connection
-from core.merma import (
-    calcular_merma, merma_por_sucursal,
-    listar_categorias, listar_fechas_valorizacion,
+from core.comun import listar_categorias, listar_fechas_valorizacion
+from core.merma.analisis import calcular_merma, merma_por_sucursal
+from core.merma.control import (
+    evolucion_mensual, movimientos_outliers, ajustes_por_usuario,
 )
+from core.inventario.salud import analizar_stock, resumen_salud, ESTADOS
+from core.inventario.politicas import (
+    calcular_politicas, resumen_politicas, ESTADOS_POLITICA,
+)
+from core.distribucion.transferencias import sugerir_transferencias
+from core.comercial.margenes import analizar_margenes, evolucion_costos
+from core.forecasting.demanda import forecast_ventas, serie_mensual_real, NIVELES, METRICAS
 from core.reporte import (
     generar_reporte, generar_reporte_control, generar_reporte_salud,
     generar_reporte_politicas, generar_reporte_forecast,
     generar_reporte_transferencias,
     cargar_branding, guardar_branding,
 )
-from core.transferencias import sugerir_transferencias
-from core.margenes import analizar_margenes, evolucion_costos
-from core.salud_stock import analizar_stock, resumen_salud, ESTADOS
-from core.control_merma import (
-    evolucion_mensual, movimientos_outliers, ajustes_por_usuario,
-)
-from core.politicas_stock import (
-    calcular_politicas, resumen_politicas, ESTADOS_POLITICA,
-)
-from core.forecast import forecast_ventas, serie_mensual_real, NIVELES, METRICAS
 
 
 # ---------------------------------------------------------------------------

@@ -25,7 +25,7 @@ Requiere al menos 12 meses de historia por grupo (ideal 24 para capturar
 estacionalidad).
 
 Uso:
-    from core.forecast import forecast_ventas
+    from core.forecasting.demanda import forecast_ventas
 
     df = forecast_ventas("cliente_x", nivel="gran_super_rubro",
                          horizonte=6, backtest=3)
@@ -34,7 +34,7 @@ Uso:
 import numpy as np
 import pandas as pd
 
-from core.merma import _get_connection
+from core.comun import conectar as _get_connection
 
 NIVELES = ("total", "gran_super_rubro", "rubro", "sucursal")
 METRICAS = ("ventas", "transferencias")
@@ -109,7 +109,7 @@ def _serie_mensual(conn, codigodepo: str | None, nivel: str,
         est = conn.execute(
             "SELECT rubro_cod, rubro, super_rubro, gran_super_rubro FROM estructura"
         ).df()
-        from core.merma import _mapa_estructura
+        from core.comun import mapa_estructura as _mapa_estructura
         mapa = _mapa_estructura(est).set_index("_clave")
         rubro_art = arts.set_index("codigo")["rubro"].astype("string").str.strip()
         clave = df["codigo"].map(rubro_art)

@@ -1,7 +1,7 @@
 """
 core/transferencias.py — Sugerencias de redistribución entre sucursales
 
-Cruza las políticas de stock (core.politicas_stock): un SKU en EXCESO en una
+Cruza las políticas de stock (core.inventario.politicas): un SKU en EXCESO en una
 sucursal y con necesidad de REPOSICIÓN en otra es un candidato a transferencia
 lateral — se reabastece con capital ya comprado, sin esperar al proveedor.
 
@@ -16,7 +16,7 @@ Reglas:
     reposición normal, no una transferencia lateral).
 
 Uso:
-    from core.transferencias import sugerir_transferencias
+    from core.distribucion.transferencias import sugerir_transferencias
 
     df = sugerir_transferencias("cliente_x")   # mismos params que políticas
 """
@@ -25,7 +25,7 @@ import math
 
 import pandas as pd
 
-from core.politicas_stock import calcular_politicas
+from core.inventario.politicas import calcular_politicas
 
 
 def sugerir_transferencias(

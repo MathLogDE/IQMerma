@@ -26,7 +26,7 @@ su gemela en unidades (`<cat> (u)`), más totales y %.
   - df.attrs["fecha_valorizacion"] → snapshot efectivamente usado
 
 Uso:
-    from core.merma import calcular_merma
+    from core.merma.analisis import calcular_merma
 
     df = calcular_merma(
         proyecto="cliente_alfa",

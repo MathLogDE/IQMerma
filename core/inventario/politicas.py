@@ -31,7 +31,7 @@ Estados sugeridos:
   sin_demanda  stock > 0 sin ventas en la ventana
 
 Uso:
-    from core.politicas_stock import calcular_politicas, resumen_politicas
+    from core.inventario.politicas import calcular_politicas, resumen_politicas
 
     df = calcular_politicas("cliente_x", codigodepo=None, dias_demanda=90)
 """
@@ -41,7 +41,7 @@ import math
 import duckdb
 import pandas as pd
 
-from core.merma import _get_connection, _mapa_estructura
+from core.comun import conectar as _get_connection, mapa_estructura as _mapa_estructura
 
 Z_POR_CLASE = {"A": 1.65, "B": 1.28, "C": 0.84}
 ESTADOS_POLITICA = ("reponer", "ok", "exceso", "sin_demanda")

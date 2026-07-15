@@ -17,7 +17,7 @@ lista_1), snapshot elegible (default: el más reciente).
 import duckdb
 import pandas as pd
 
-from core.merma import _get_connection, MODOS_VALORIZACION
+from core.comun import conectar as _get_connection, MODOS_VALORIZACION
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ Definiciones:
 Los pares (SKU, sucursal) sin stock ni ventas en la ventana se excluyen.
 
 Uso:
-    from core.salud_stock import analizar_stock
+    from core.inventario.salud import analizar_stock
 
     df = analizar_stock(
         proyecto="cliente_x",
@@ -38,7 +38,7 @@ Uso:
 import duckdb
 import pandas as pd
 
-from core.merma import _get_connection, _mapa_estructura
+from core.comun import conectar as _get_connection, mapa_estructura as _mapa_estructura
 
 ESTADOS = ("quiebre", "critico", "ok", "sobrestock", "muerto")
 

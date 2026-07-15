@@ -17,7 +17,7 @@ unidades de movimientos (es_venta / es_merma) valorizadas al snapshot.
 import duckdb
 import pandas as pd
 
-from core.merma import _get_connection, _mapa_estructura
+from core.comun import conectar as _get_connection, mapa_estructura as _mapa_estructura
 
 
 def analizar_margenes(
