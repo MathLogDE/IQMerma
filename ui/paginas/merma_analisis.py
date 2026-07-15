@@ -140,12 +140,16 @@ def render(proyecto):
             with g1:
                 st.markdown("#### Composición de la merma")
                 comp = {c: merma_por_categoria(df, c).sum() for c in merma_cats}
-                comp = {k: v for k, v in comp.items() if v > 0}
-                fig = go.Figure(go.Pie(
-                    labels=list(comp.keys()), values=list(comp.values()), hole=0.55,
-                    marker=dict(colors=[PALETA[i % len(PALETA)] for i in range(len(comp))]),
-                    textinfo="label+percent"))
-                fig.update_layout(height=380, showlegend=False, **LAYOUT_OSCURO)
+                # aporte con signo: un faltante suma, un ajuste positivo resta
+                fig = go.Figure(go.Bar(
+                    x=list(comp.values()), y=list(comp.keys()), orientation="h",
+                    marker_color=["#ff6b6b" if v >= 0 else "#64ffda" for v in comp.values()],
+                    text=[formatear_pesos(v) for v in comp.values()],
+                    textposition="auto"))
+                fig.update_layout(
+                    height=380, showlegend=False,
+                    xaxis=dict(title="Aporte a la merma $", gridcolor="#1e2130"),
+                    yaxis=dict(autorange="reversed"), **LAYOUT_OSCURO)
                 st.plotly_chart(fig, width="stretch")
             with g2:
                 st.markdown("#### Top 15 SKUs por merma")

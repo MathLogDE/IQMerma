@@ -135,9 +135,10 @@ def _render(template: str, proyecto: str | None, titulo: str,
 
 
 def _merma_cat(df: pd.DataFrame, cat: str) -> pd.Series:
+    """Aporte de la categoría a la merma = su neto negado (con signo)."""
     if cat not in df.columns:
         return pd.Series(0.0, index=df.index)
-    return (-df[cat]).clip(lower=0)
+    return -df[cat]
 
 
 def _w(valor: float, maximo: float) -> float:
@@ -171,15 +172,15 @@ def generar_reporte(
 
     composicion = []
     for c in merma_cats:
-        v = float(_merma_cat(df, c).sum())
+        v = float(_merma_cat(df, c).sum())            # aporte con signo
         cu = f"{c} (u)"
-        u = float((-df[cu]).clip(lower=0).sum()) if cu in df.columns else 0.0
-        if v > 0:
+        u = float(-df[cu].sum()) if cu in df.columns else 0.0
+        if abs(v) > 0:
             composicion.append({"nombre": c, "valor": v, "unidades": u})
-    comp_max = max((c["valor"] for c in composicion), default=0)
+    comp_max = max((abs(c["valor"]) for c in composicion), default=0)
     for c in composicion:
         c["share"] = c["valor"] / merma_total * 100 if merma_total > 0 else 0
-        c["share_w"] = _w(c["valor"], comp_max)
+        c["share_w"] = _w(abs(c["valor"]), comp_max)
     composicion.sort(key=lambda c: -c["valor"])
 
     sucursales, suc_total = [], None

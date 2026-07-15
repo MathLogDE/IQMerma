@@ -14,7 +14,9 @@ Modelo (decisiones cerradas en MIGRACION_V2.md):
     por SKU (una sola columna en el ERP), así que no se filtra por sucursal.
     `fecha_valorizacion` elige el snapshot (el más reciente <= esa fecha);
     si no se pasa, se usa el último snapshot disponible (valor actual).
-  - Merma (numerador): parte negativa de las categorías marcadas es_merma.
+  - Merma (numerador): neto con signo de las categorías es_merma por SKU,
+    negado (faltante suma, ajuste positivo resta). Se compensan dentro del
+    mismo código; al totalizar se anulan.
   - Venta (denominador): unidades netas de las categorías marcadas es_venta
     (la salida, en positivo), valorizadas desde el stock.
   - % merma = merma_total_valorizada / venta_neta * 100.
@@ -71,15 +73,6 @@ def _ensamblar(df_comp, df_val, df_art, df_est, cats_orden,
         df_comp["unit"] = df_comp["codigo"].map(val)
         df_comp["neto_valorizado"] = df_comp["neto_unidades"] * df_comp["unit"]
 
-        # contribución a merma ($ y unidades): parte negativa de cats es_merma
-        df_comp["merma_contrib"] = 0.0
-        mask = df_comp["es_merma"] & (df_comp["neto_valorizado"] < 0)
-        df_comp.loc[mask, "merma_contrib"] = -df_comp.loc[mask, "neto_valorizado"]
-
-        df_comp["merma_contrib_u"] = 0.0
-        mask_u = df_comp["es_merma"] & (df_comp["neto_unidades"] < 0)
-        df_comp.loc[mask_u, "merma_contrib_u"] = -df_comp.loc[mask_u, "neto_unidades"]
-
         pivot_val = df_comp.pivot_table(
             index="codigo", columns="categoria",
             values="neto_valorizado", aggfunc="sum",
@@ -88,8 +81,13 @@ def _ensamblar(df_comp, df_val, df_art, df_est, cats_orden,
             index="codigo", columns="categoria",
             values="neto_unidades", aggfunc="sum",
         )
-        merma_total   = df_comp.groupby("codigo")["merma_contrib"].sum()
-        merma_total_u = df_comp.groupby("codigo")["merma_contrib_u"].sum()
+        # Merma por SKU = neto (con signo) de las categorías es_merma, negado
+        # para que un faltante sea positivo. Las categorías se compensan entre
+        # sí dentro del mismo SKU (INV vs CS del mismo código); al totalizar,
+        # los netos se anulan. Puede ser negativa (sobrante neto del SKU).
+        es_m = df_comp[df_comp["es_merma"]]
+        merma_total   = -es_m.groupby("codigo")["neto_valorizado"].sum()
+        merma_total_u = -es_m.groupby("codigo")["neto_unidades"].sum()
         # unidades vendidas = -(neto de categorías es_venta): la venta es salida
         vs = df_comp[df_comp["es_venta"]].groupby("codigo")["neto_unidades"].sum()
     else:
@@ -289,9 +287,8 @@ def merma_por_sucursal(
     Comparativa agregada por sucursal para un rango de fechas: una fila por
     sucursal con la merma/venta por categoría ($ y unidades), totales y %.
 
-    Misma semántica que calcular_merma (la merma se computa a nivel SKU —
-    parte negativa por SKU y categoría — y recién ahí se agrega por sucursal,
-    para que los sobrantes de un SKU no tapen los faltantes de otro).
+    Misma semántica que calcular_merma: la merma es el neto con signo de las
+    categorías es_merma (negado), que se anula al sumar por sucursal.
 
     Args:
         codigos: lista opcional de SKUs a incluir (para respetar filtros de
@@ -383,13 +380,6 @@ def merma_por_sucursal(
     df_g["unit"] = df_g["codigo"].map(val)
     df_g["neto_valorizado"] = df_g["neto_unidades"] * df_g["unit"]
 
-    df_g["merma_contrib"] = 0.0
-    m = df_g["es_merma"] & (df_g["neto_valorizado"] < 0)
-    df_g.loc[m, "merma_contrib"] = -df_g.loc[m, "neto_valorizado"]
-    df_g["merma_contrib_u"] = 0.0
-    mu = df_g["es_merma"] & (df_g["neto_unidades"] < 0)
-    df_g.loc[mu, "merma_contrib_u"] = -df_g.loc[mu, "neto_unidades"]
-
     # pivots por sucursal
     piv_val = df_g.pivot_table(index="codigodepo", columns="categoria",
                                values="neto_valorizado", aggfunc="sum")
@@ -409,12 +399,18 @@ def merma_por_sucursal(
     cols_num = cats + [f"{c} (u)" for c in cats]
     res[cols_num] = res[cols_num].fillna(0.0)
 
-    res["skus"] = g["codigo"].nunique()
-    con_merma = df_g[df_g["merma_contrib"] > 0].groupby("codigodepo")["codigo"].nunique()
-    res["skus_con_merma"] = con_merma.reindex(res.index).fillna(0).astype(int)
+    # Merma = neto (con signo) de es_merma; los netos por SKU se anulan al sumar.
+    es_m = df_g[df_g["es_merma"]]
+    merma_sku = -es_m.groupby(["codigodepo", "codigo"])["neto_valorizado"].sum()
+    con_merma = (merma_sku[merma_sku > 0].reset_index()
+                 .groupby("codigodepo")["codigo"].nunique())
 
-    res["merma_total_valorizada"] = g["merma_contrib"].sum()
-    res["merma_total_unidades"]   = g["merma_contrib_u"].sum()
+    res["skus"] = g["codigo"].nunique()
+    res["skus_con_merma"] = con_merma.reindex(res.index).fillna(0).astype(int)
+    res["merma_total_valorizada"] = (-es_m.groupby("codigodepo")["neto_valorizado"].sum()
+                                     ).reindex(res.index).fillna(0.0)
+    res["merma_total_unidades"]   = (-es_m.groupby("codigodepo")["neto_unidades"].sum()
+                                     ).reindex(res.index).fillna(0.0)
 
     dv = df_g[df_g["es_venta"]].groupby("codigodepo")
     res["unidades_vendidas"] = (-dv["neto_unidades"].sum()).reindex(res.index).fillna(0.0)

@@ -49,23 +49,22 @@ def analizar_margenes(
         if fecha_hasta:
             params["hasta"] = str(pd.to_datetime(fecha_hasta).date())
 
-        # Misma convención que core.merma: neto por SKU × categoría en el
-        # período y recién ahí la parte negativa (las correcciones cruzadas
-        # no inflan la merma).
+        # Misma convención que core.merma: la merma es el neto (con signo) de
+        # las categorías es_merma por SKU, negado — las categorías (INV vs CS)
+        # se compensan dentro del mismo código.
         df_mov = conn.execute(f"""
             WITH neto AS (
-                SELECT m.codigo, t.categoria, t.es_venta, t.es_merma,
+                SELECT m.codigo, t.es_venta, t.es_merma,
                        SUM(m.diferencia) AS neto_unidades
                 FROM movimientos m
                 JOIN tipos_categoria t ON m.tipo = t.tipo
                 WHERE (t.es_venta OR t.es_merma)
                   {filtro_depo} {filtro_desde} {filtro_hasta}
-                GROUP BY 1, 2, 3, 4
+                GROUP BY 1, 2, 3
             )
             SELECT codigo,
                    -SUM(neto_unidades) FILTER (WHERE es_venta)  AS unidades_vendidas,
-                   SUM(CASE WHEN es_merma AND neto_unidades < 0
-                            THEN -neto_unidades ELSE 0 END)     AS merma_unidades
+                   -SUM(neto_unidades) FILTER (WHERE es_merma)  AS merma_unidades
             FROM neto
             GROUP BY 1
         """, params if params else []).df()

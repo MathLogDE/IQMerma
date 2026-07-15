@@ -66,9 +66,9 @@ def evolucion_mensual(
     fecha_valorizacion: str | None = None,
 ) -> pd.DataFrame:
     """
-    Merma y venta valorizadas por mes. La merma se calcula a nivel
-    (mes, SKU, categoría) — parte negativa de las categorías es_merma —
-    y se agrega por mes; la venta idem con es_venta.
+    Merma y venta valorizadas por mes. La merma es el neto con signo de las
+    categorías es_merma (negado, se compensan entre sí), agregado por mes;
+    la venta idem con es_venta.
 
     Returns:
         DataFrame por mes: columnas $ por categoría de merma, merma_total,
@@ -123,24 +123,20 @@ def evolucion_mensual(
     val = df_val.set_index("codigo")[unit_col]
     df_g["neto_valorizado"] = df_g["neto_unidades"] * df_g["codigo"].map(val)
 
-    m = df_g["es_merma"] & (df_g["neto_valorizado"] < 0)
-    df_g["merma_contrib"] = 0.0
-    df_g.loc[m, "merma_contrib"] = -df_g.loc[m, "neto_valorizado"]
-    mu = df_g["es_merma"] & (df_g["neto_unidades"] < 0)
-    df_g["merma_contrib_u"] = 0.0
-    df_g.loc[mu, "merma_contrib_u"] = -df_g.loc[mu, "neto_unidades"]
-
-    piv = (df_g[m].pivot_table(index="mes", columns="categoria",
-                               values="merma_contrib", aggfunc="sum")
-           if m.any() else pd.DataFrame())
+    # Merma = neto (con signo) de es_merma, negado; las categorías se compensan
+    # y aportan su neto negado (Inventario suma, un Ajuste positivo resta).
+    es_m = df_g[df_g["es_merma"]]
+    piv = (-es_m.pivot_table(index="mes", columns="categoria",
+                             values="neto_valorizado", aggfunc="sum")
+           if not es_m.empty else pd.DataFrame())
 
     g = df_g.groupby("mes")
     res = pd.DataFrame(index=g.size().index)
     for c in cats_merma:
         res[c] = piv[c] if c in getattr(piv, "columns", []) else 0.0
     res[cats_merma] = res[cats_merma].fillna(0.0)
-    res["merma_total"] = g["merma_contrib"].sum()
-    res["merma_unidades"] = g["merma_contrib_u"].sum()
+    res["merma_total"]    = (-es_m.groupby("mes")["neto_valorizado"].sum()).reindex(res.index).fillna(0.0)
+    res["merma_unidades"] = (-es_m.groupby("mes")["neto_unidades"].sum()).reindex(res.index).fillna(0.0)
 
     dv = df_g[df_g["es_venta"]].groupby("mes")["neto_valorizado"].sum()
     res["venta_neta"] = (-dv).reindex(res.index).fillna(0.0)

@@ -202,10 +202,14 @@ def formatear_unidades(valor) -> str:
 
 
 def merma_por_categoria(df: pd.DataFrame, cat: str) -> pd.Series:
-    """Magnitud de merma (parte negativa, en positivo) de una columna-categoría."""
+    """
+    Aporte de una categoría a la merma = su neto negado (con signo): un
+    faltante (columna negativa) aporta positivo; un ajuste positivo resta.
+    Los aportes de las categorías es_merma suman la merma total.
+    """
     if cat not in df.columns:
         return pd.Series(0.0, index=df.index)
-    return (-df[cat]).clip(lower=0)
+    return -df[cat]
 
 
 def a_excel(df: pd.DataFrame) -> bytes:
@@ -275,14 +279,13 @@ def render_comparativa(df_suc: pd.DataFrame, merma_cats: list[str], key: str) ->
 
     botones_descarga(df_suc[cols], "comparativa_sucursales", key)
 
-    # Gráfico: merma apilada por categoría + % en eje secundario
+    # Gráfico: aporte a merma por categoría (con signo) + % en eje secundario
     fig = go.Figure()
     for i, cat in enumerate(merma_cats):
-        cu = f"{cat} (u)"
         if cat in df_suc.columns:
             fig.add_bar(
                 name=cat, x=df_suc["sucursal"],
-                y=(-df_suc[cat]).clip(lower=0),
+                y=-df_suc[cat],
                 marker_color=PALETA[i % len(PALETA)],
             )
     fig.add_scatter(

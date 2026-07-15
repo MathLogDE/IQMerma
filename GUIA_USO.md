@@ -361,7 +361,12 @@ resultado ya calculado y filtrado: barras de merma ordenadas y curva de
 **stock** (snapshot más reciente ≤ fecha hasta).
 
 - **Categorías de merma** (`es_merma`, suman al numerador): **Inventario (INV)**
-  y **Ajustes (CS)** — solo su **parte negativa** (faltante).
+  y **Ajustes (CS)**. La merma de un SKU es el **neto con signo** de estas
+  categorías, negado (un faltante suma; un ajuste positivo resta) — así se
+  **compensan dentro del mismo código** (ej: un egreso de INV y un ingreso de
+  CS del mismo SKU se cancelan). Al totalizar, los netos se anulan; un SKU
+  puede quedar con merma negativa (sobrante neto). En las tablas se ven las
+  columnas Inventario y Ajustes por separado.
 - **Categoría de venta** (`es_venta`, denominador): **Ventas**
   (FA/FB/NCA/NCB/FCA/NCCA). La venta del período = unidades netas vendidas
   (la salida) valorizadas desde el stock. Las devoluciones (NCA/NCB) descuentan.
