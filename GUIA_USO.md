@@ -60,15 +60,17 @@ no hay proyectos, la app te avisa cómo crear uno.
 
 ## 4. La interfaz de un vistazo
 
-**Barra lateral:** selector de **proyecto** + navegación entre 5 páginas.
+**Barra lateral:** selector de **proyecto** + navegación por **secciones**
+(elegís la sección y después la página):
 
-| Página | Para qué |
+| Sección | Páginas |
 |---|---|
-| **Inicio** | Métricas rápidas del proyecto y rango de fechas disponible. |
-| **Ingesta** | Ver qué períodos hay cargados y subir archivos nuevos. |
-| **Análisis** | Merma por SKU para una sucursal y un rango de fechas. |
-| **Sucursales** | Merma agregada, comparando todas las sucursales. |
-| **Rubros** | Pareto de merma por rubro (usa lo calculado en Análisis). |
+| **General** | Inicio · Ingesta |
+| **Merma** | Análisis (con pestañas Detalle · Comparativa por sucursal · Pareto por rubro) · Control de merma |
+| **Inventario** | Salud de stock · Min / Opt / Max |
+| **Distribución** | Transferencias |
+| **Comercial** | Márgenes |
+| **Forecasting** | Forecast |
 
 ## 5. Cargar datos
 
@@ -334,22 +336,23 @@ Características del modelo:
 - El valor $ se deriva de las unidades × precio de lista actual promedio.
 - Requiere ≥ 12 meses de historia por grupo (ideal 24 para estacionalidad).
 
-### Página Sucursales
+### Análisis → pestaña Comparativa por sucursal
 
-Mismo rango y valorización, pero calcula la comparativa de **todas las
-sucursales** en una sola pasada: métricas globales, tabla por sucursal (merma
-por categoría en $ y unidades, venta, %), gráfico apilado con línea de % y
-descarga Excel/CSV. Útil para detectar qué locales concentran la merma.
+Con **⊕ Todas las sucursales** elegido, esta pestaña compara todas las
+sucursales en una sola pasada: tabla por sucursal (merma por categoría en $ y
+unidades, venta, %), gráfico apilado con línea de % y descarga Excel/CSV.
+Respeta los filtros aplicados. Útil para detectar qué locales concentran la
+merma.
 
-> Ojo: los **centros de distribución** aparecen en la comparativa con venta
-> baja o negativa (no venden; reciben). Al comparar % de merma entre locales,
-> mirá las sucursales de venta.
+> Ojo: los **centros de distribución** aparecen con venta baja o negativa (no
+> venden; reciben). Por defecto se excluyen con el checkbox "Excluir depósitos
+> logísticos".
 
-### Página Rubros
+### Análisis → pestaña Pareto por rubro
 
-Pareto de merma por **rubro** (o super rubro / gran super rubro). Usa lo que
-calculaste en **Análisis**, así que primero corré esa página. Muestra las barras
-de merma por rubro ordenadas y la curva de **% acumulado** (regla 80/20).
+Pareto de merma por **rubro** (o super rubro / gran super rubro) sobre el
+resultado ya calculado y filtrado: barras de merma ordenadas y curva de
+**% acumulado** (regla 80/20).
 
 ## 7. Cómo se calcula la merma
 
@@ -420,7 +423,7 @@ conn.close()
 | Un SKU sin `% Merma` | No tiene ventas en el rango (denominador 0). |
 | Columna **"(sin categoría)"** con valores | Hay subtipos de movimiento que no están en `tipos_categoria`. Agregalos al catálogo. |
 | Merma valorizada en 0 pese a haber faltantes | El SKU no tiene snapshot de stock ≤ fecha hasta → no se puede valorizar. Cargá un stock que cubra el período. |
-| La página Rubros dice "Calculá primero el análisis" | Corré **Análisis** antes; Rubros reutiliza ese resultado. |
+| La comparativa por sucursal pide elegir "Todas" | En Análisis, seleccioná **⊕ Todas las sucursales** y recalculá; esa pestaña compara entre locales. |
 | Un mes aparece "desparramado" en otros meses, o faltan días > 12 | Fechas con swap día/mes (Excel en locale US convierte `3/11` en 11-mar). La ingesta lo corrige usando el nombre de la pestaña (`11-25` → nov-2025) y avisa cuántas corrigió — pero los datos cargados **antes** del fix hay que recargarlos. |
 | "[ALERTA] Solo X% de las filas caen en el mes principal" al ingestar | El archivo mezcla meses o el formato de fecha no se pudo resolver. Revisar el Excel de origen. |
 | "streamlit.exe ha sido bloqueado por la directiva de Device Guard" | Usá `python -m streamlit run ui/app.py` (o `iniciar.bat`): evita el .exe sin firma de AppData. |

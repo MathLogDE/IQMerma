@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
 from ui.comun import CSS
 from ui.paginas import (
     inicio, ingesta,
-    merma_analisis, merma_control, merma_sucursales, merma_rubros,
+    merma_analisis, merma_control,
     inventario_salud, inventario_politicas,
     distribucion_transferencias, comercial_margenes, forecasting,
 )
@@ -46,7 +46,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 SECCIONES = {
     "General":       ["Inicio", "Ingesta"],
-    "Merma":         ["Análisis", "Control de merma", "Sucursales", "Rubros"],
+    "Merma":         ["Análisis", "Control de merma"],
     "Inventario":    ["Salud de stock", "Min / Opt / Max"],
     "Distribución":  ["Transferencias"],
     "Comercial":     ["Márgenes"],
@@ -58,8 +58,6 @@ RENDER = {
     "Ingesta":           ingesta.render,
     "Análisis":          merma_analisis.render,
     "Control de merma":  merma_control.render,
-    "Sucursales":        merma_sucursales.render,
-    "Rubros":            merma_rubros.render,
     "Salud de stock":    inventario_salud.render,
     "Min / Opt / Max":   inventario_politicas.render,
     "Transferencias":    distribucion_transferencias.render,
