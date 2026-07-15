@@ -234,9 +234,9 @@ INNER JOIN (
 # ---------------------------------------------------------------------------
 # Catálogo del ERP. El cliente puede editar/extender esta tabla sin tocar
 # código.
-#   es_merma=TRUE  -> pérdida no explicada: Inventario, Dif. de camión, Ajustes.
+#   es_merma=TRUE  -> pérdida no explicada: Inventario y Ajustes (CS).
 #   es_venta=TRUE  -> cuenta como venta (denominador del %): Ventas.
-# Remitos son flujos legítimos (ni merma ni venta).
+# Remitos y Dif. de camión (MD) son informativos: ni merma ni venta.
 DEFAULT_TIPOS_CATEGORIA = [
     # (tipo,  tipomov, categoria,         es_merma, es_venta, orden)
     ("FA",   "VTA", "Ventas",         False, True,  1),  # Factura A
@@ -246,7 +246,7 @@ DEFAULT_TIPOS_CATEGORIA = [
     ("FCA",  "VTA", "Ventas",         False, True,  1),  # Factura compra A
     ("NCCA", "VTA", "Ventas",         False, True,  1),  # Nota crédito compra A
     ("INV",  "INV", "Inventario",     True,  False, 2),  # Inventario físico
-    ("MD",   "REM", "Dif. de camión", True,  False, 3),  # Movimiento directo
+    ("MD",   "REM", "Dif. de camión", False, False, 3),  # Movimiento directo (informativo)
     ("CS",   "AJU", "Ajustes",        True,  False, 4),  # Control de stock
     ("RE",   "REM", "Remitido",       False, False, 5),  # Remito externo (recepción)
     ("RI",   "REM", "Remitido",       False, False, 5),  # Remito interno (transferencia)

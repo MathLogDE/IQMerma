@@ -357,13 +357,13 @@ de merma por rubro ordenadas y la curva de **% acumulado** (regla 80/20).
 `diferencia` (neta) de los movimientos del rango, y se valoriza contra el
 **stock** (snapshot más reciente ≤ fecha hasta).
 
-- **Categorías de merma** (`es_merma`, suman al numerador): **Inventario (INV)**,
-  **Dif. de camión (MD)** y **Ajustes (CS)** — solo su **parte negativa**
-  (faltante).
+- **Categorías de merma** (`es_merma`, suman al numerador): **Inventario (INV)**
+  y **Ajustes (CS)** — solo su **parte negativa** (faltante).
 - **Categoría de venta** (`es_venta`, denominador): **Ventas**
   (FA/FB/NCA/NCB/FCA/NCCA). La venta del período = unidades netas vendidas
   (la salida) valorizadas desde el stock. Las devoluciones (NCA/NCB) descuentan.
-- **No son ni merma ni venta**: **Remitido** (RE/RI/RDC) — flujos legítimos.
+- **No son ni merma ni venta**: **Remitido** (RE/RI/RDC) y **Dif. de camión
+  (MD)** — se muestran como columnas informativas (neto con signo).
 - **Valorización — siempre desde el stock**:
   - *A costo* → unidades × `costo` del stock.
   - *A precio de lista* → unidades × `lista_1` del stock.
