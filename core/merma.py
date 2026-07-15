@@ -42,75 +42,15 @@ import duckdb
 import pandas as pd
 
 
-# ---------------------------------------------------------------------------
-# Constantes
-# ---------------------------------------------------------------------------
-
-MODOS_VALORIZACION = ("costo", "lista_1")
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _get_connection(proyecto: str) -> duckdb.DuckDBPyConnection:
-    from setup_db import get_db_path
-    db_path = get_db_path(proyecto)
-    if not db_path.exists():
-        raise FileNotFoundError(
-            f"No existe la base de datos para '{proyecto}'. "
-            f"Corré: python setup_db.py --project {proyecto}"
-        )
-    return duckdb.connect(str(db_path))
-
-
-def listar_categorias(proyecto: str) -> list[str]:
-    """Categorías ordenadas según `tipos_categoria` (para la UI)."""
-    conn = _get_connection(proyecto)
-    try:
-        rows = conn.execute("""
-            SELECT categoria
-            FROM tipos_categoria
-            GROUP BY categoria
-            ORDER BY MIN(orden), categoria
-        """).fetchall()
-    finally:
-        conn.close()
-    return [r[0] for r in rows]
-
-
-def listar_fechas_valorizacion(proyecto: str) -> list[str]:
-    """Fechas de snapshot de stock disponibles, de la más reciente a la más vieja."""
-    conn = _get_connection(proyecto)
-    try:
-        rows = conn.execute("""
-            SELECT DISTINCT fecha_snapshot
-            FROM stock_sucursal
-            ORDER BY fecha_snapshot DESC
-        """).fetchall()
-    finally:
-        conn.close()
-    return [str(r[0]) for r in rows]
-
-
-def _mapa_estructura(df_est: pd.DataFrame) -> pd.DataFrame:
-    """
-    Lookup de estructura indexable por código de rubro O por nombre
-    (articulos.rubro puede traer cualquiera de los dos).
-    """
-    registros = []
-    for _, r in df_est.iterrows():
-        for clave in (r["rubro_cod"], r["rubro"]):
-            if pd.notna(clave):
-                registros.append({
-                    "_clave": str(clave).strip(),
-                    "rubro_desc": r["rubro"],
-                    "super_rubro": r["super_rubro"],
-                    "gran_super_rubro": r["gran_super_rubro"],
-                })
-    if not registros:
-        return pd.DataFrame(columns=["_clave", "rubro_desc", "super_rubro", "gran_super_rubro"])
-    return pd.DataFrame(registros).drop_duplicates("_clave")
+# Helpers compartidos (definidos en core.comun; se re-exportan para
+# compatibilidad con quien todavía importa desde core.merma).
+from core.comun import (  # noqa: E402
+    MODOS_VALORIZACION,
+    conectar as _get_connection,
+    mapa_estructura as _mapa_estructura,
+    listar_categorias,
+    listar_fechas_valorizacion,
+)
 
 
 # ---------------------------------------------------------------------------
