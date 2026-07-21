@@ -67,6 +67,8 @@
     tr:nth-child(even) td { background: #fafbfd; }
     .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .rojo { color: var(--acento); font-weight: 600; }
+    /* merma negativa = sobrante neto (resultado a favor) */
+    .verde { color: var(--verde); font-weight: 600; }
     tfoot td { border-top: 2px solid var(--tinta); border-bottom: none; font-weight: 700; background: var(--fondo) !important; }
 
     /* --- barras CSS --- */
@@ -74,6 +76,7 @@
     .barra { height: 9px; border-radius: 3px; background: var(--acento); min-width: 2px; }
     .barra.venta { background: var(--azul); }
     .barra.gris  { background: var(--gris); }
+    .barra.verde { background: var(--verde); }
 
     footer {
         margin-top: 26px; padding-top: 8px; border-top: 1px solid var(--linea);

@@ -23,6 +23,9 @@ from core.comun import listar_categorias, listar_fechas_valorizacion
 from core.merma.analisis import calcular_merma, merma_por_sucursal
 from core.merma.control import evolucion_mensual, movimientos_outliers, ajustes_por_usuario
 from core.inventario.salud import analizar_stock, resumen_salud, ESTADOS
+from core.inventario.series import (
+    serie_stock, resumen_quiebres, serie_diaria, quiebres_por_dia,
+)
 from core.inventario.politicas import calcular_politicas, resumen_politicas, ESTADOS_POLITICA
 from core.distribucion.transferencias import sugerir_transferencias
 from core.comercial.margenes import analizar_margenes, evolucion_costos

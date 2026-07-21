@@ -28,10 +28,10 @@
         {% for c in composicion %}
         <tr>
             <td>{{ c.nombre }}</td>
-            <td class="num">{{ c.valor | pesos }}</td>
+            <td class="num {{ 'verde' if c.neg else 'rojo' }}">{{ c.valor | pesos }}</td>
             <td class="num">{{ c.unidades | unidades }}</td>
             <td class="num">{{ c.share | pct }}</td>
-            <td class="barra-celda"><div class="barra" style="width: {{ c.share_w }}%"></div></td>
+            <td class="barra-celda"><div class="barra {{ 'verde' if c.neg else '' }}" style="width: {{ c.share_w }}%"></div></td>
         </tr>
         {% endfor %}
         </tbody>
@@ -51,16 +51,16 @@
         <tr>
             <td>{{ s.nombre }}</td>
             <td class="num">{{ s.skus_con_merma | unidades }}</td>
-            <td class="num rojo">{{ s.merma | pesos }}</td>
+            <td class="num {{ 'verde' if s.neg else 'rojo' }}">{{ s.merma | pesos }}</td>
             <td class="num">{{ s.merma_u | unidades }}</td>
             <td class="num">{{ s.venta | pesos }}</td>
             <td class="num">{{ s.pct | pct }}</td>
-            <td class="barra-celda"><div class="barra" style="width: {{ s.merma_w }}%"></div></td>
+            <td class="barra-celda"><div class="barra {{ 'verde' if s.neg else '' }}" style="width: {{ s.merma_w }}%"></div></td>
         </tr>
         {% endfor %}
         </tbody>
         <tfoot><tr><td>Total</td><td class="num">{{ suc_total.skus_con_merma | unidades }}</td>
-            <td class="num rojo">{{ suc_total.merma | pesos }}</td><td class="num">{{ suc_total.merma_u | unidades }}</td>
+            <td class="num {{ 'verde' if suc_total.neg else 'rojo' }}">{{ suc_total.merma | pesos }}</td><td class="num">{{ suc_total.merma_u | unidades }}</td>
             <td class="num">{{ suc_total.venta | pesos }}</td><td class="num">{{ suc_total.pct | pct }}</td><td></td></tr></tfoot>
     </table>
 </div>
@@ -76,11 +76,11 @@
         {% for r in rubros %}
         <tr>
             <td>{{ r.nombre }}</td>
-            <td class="num rojo">{{ r.merma | pesos }}</td>
+            <td class="num {{ 'verde' if r.neg else 'rojo' }}">{{ r.merma | pesos }}</td>
             <td class="num">{{ r.venta | pesos }}</td>
             <td class="num">{{ r.pct | pct }}</td>
             <td class="num">{{ r.share | pct }}</td>
-            <td class="barra-celda"><div class="barra" style="width: {{ r.share_w }}%"></div></td>
+            <td class="barra-celda"><div class="barra {{ 'verde' if r.neg else '' }}" style="width: {{ r.share_w }}%"></div></td>
         </tr>
         {% endfor %}
         </tbody>
@@ -100,7 +100,7 @@
             <td>{{ s.codigo }}</td>
             <td>{{ s.descripcion }}</td>
             <td>{{ s.rubro }}</td>
-            <td class="num rojo">{{ s.merma | pesos }}</td>
+            <td class="num {{ 'verde' if s.neg else 'rojo' }}">{{ s.merma | pesos }}</td>
             <td class="num">{{ s.merma_u | unidades }}</td>
             <td class="num">{{ s.venta | pesos }}</td>
             <td class="num">{{ s.pct | pct }}</td>

@@ -22,7 +22,7 @@ from ui.comun import CSS
 from ui.paginas import (
     inicio, ingesta,
     merma_analisis, merma_control,
-    inventario_salud, inventario_politicas,
+    inventario_salud, inventario_politicas, inventario_series,
     distribucion_transferencias, comercial_margenes, forecasting,
 )
 
@@ -47,7 +47,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 SECCIONES = {
     "General":       ["Inicio", "Ingesta"],
     "Merma":         ["Análisis", "Control de merma"],
-    "Inventario":    ["Salud de stock", "Min / Opt / Max"],
+    "Inventario":    ["Salud de stock", "Serie de stock", "Min / Opt / Max"],
     "Distribución":  ["Transferencias"],
     "Comercial":     ["Márgenes"],
     "Forecasting":   ["Forecast"],
@@ -59,6 +59,7 @@ RENDER = {
     "Análisis":          merma_analisis.render,
     "Control de merma":  merma_control.render,
     "Salud de stock":    inventario_salud.render,
+    "Serie de stock":    inventario_series.render,
     "Min / Opt / Max":   inventario_politicas.render,
     "Transferencias":    distribucion_transferencias.render,
     "Márgenes":          comercial_margenes.render,

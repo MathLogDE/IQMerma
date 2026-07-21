@@ -179,13 +179,14 @@ def generar_reporte(
             composicion.append({"nombre": c, "valor": v, "unidades": u})
     comp_max = max((abs(c["valor"]) for c in composicion), default=0)
     for c in composicion:
-        c["share"] = c["valor"] / merma_total * 100 if merma_total > 0 else 0
+        c["share"] = c["valor"] / merma_total * 100 if merma_total else 0
         c["share_w"] = _w(abs(c["valor"]), comp_max)
+        c["neg"] = c["valor"] < 0
     composicion.sort(key=lambda c: -c["valor"])
 
     sucursales, suc_total = [], None
     if df_sucursales is not None and not df_sucursales.empty:
-        suc_max = float(df_sucursales["merma_total_valorizada"].max())
+        suc_max = float(df_sucursales["merma_total_valorizada"].abs().max())
         for _, s in df_sucursales.iterrows():
             nombre = s["nombre"] if pd.notna(s["nombre"]) else s["codigodepo"]
             sucursales.append({
@@ -195,7 +196,8 @@ def generar_reporte(
                 "merma_u":        s["merma_total_unidades"],
                 "venta":          s["venta_neta"],
                 "pct":            s["pct_merma_sobre_ventas"],
-                "merma_w":        _w(s["merma_total_valorizada"], suc_max),
+                "merma_w":        _w(abs(s["merma_total_valorizada"]), suc_max),
+                "neg":            s["merma_total_valorizada"] < 0,
             })
         t_merma = float(df_sucursales["merma_total_valorizada"].sum())
         t_venta = float(df_sucursales["venta_neta"].sum())
@@ -205,6 +207,7 @@ def generar_reporte(
             "merma_u":        float(df_sucursales["merma_total_unidades"].sum()),
             "venta":          t_venta,
             "pct":            (t_merma / t_venta * 100) if t_venta > 0 else None,
+            "neg":            t_merma < 0,
         }
 
     nivel = "gran_super_rubro" if df["gran_super_rubro"].notna().any() else "rubro"
@@ -214,15 +217,18 @@ def generar_reporte(
         .reset_index()
         .sort_values("merma", ascending=False)
     )
-    df_r = df_r[df_r["merma"] > 0].head(12)
-    r_max = float(df_r["merma"].max()) if not df_r.empty else 0
+    # se conservan los rubros con merma negativa (sobrante neto): se muestran
+    # en verde. Se toman los 12 de mayor impacto absoluto.
+    df_r = df_r.reindex(df_r["merma"].abs().sort_values(ascending=False).index).head(12)
+    r_max = float(df_r["merma"].abs().max()) if not df_r.empty else 0
     rubros = [{
         "nombre":  r[nivel] if pd.notna(r[nivel]) else "Sin clasificar",
         "merma":   r["merma"],
         "venta":   r["venta"],
         "pct":     (r["merma"] / r["venta"] * 100) if r["venta"] > 0 else None,
-        "share":   (r["merma"] / merma_total * 100) if merma_total > 0 else 0,
-        "share_w": _w(r["merma"], r_max),
+        "share":   (r["merma"] / merma_total * 100) if merma_total else 0,
+        "share_w": _w(abs(r["merma"]), r_max),
+        "neg":     r["merma"] < 0,
     } for _, r in df_r.iterrows()]
 
     df_top = df[df["merma_total_valorizada"] > 0].nlargest(top_n, "merma_total_valorizada")
@@ -232,6 +238,7 @@ def generar_reporte(
         "rubro":       s["rubro"] if pd.notna(s["rubro"]) else "",
         "merma":       s["merma_total_valorizada"],
         "merma_u":     s["merma_total_unidades"],
+        "neg":         s["merma_total_valorizada"] < 0,
         "venta":       s["venta_neta"],
         "pct":         s["pct_merma_sobre_ventas"],
     } for _, s in df_top.iterrows()]
@@ -265,7 +272,7 @@ def generar_reporte_control(
     kpi = None
     ev = []
     if evolucion is not None and not evolucion.empty:
-        e_max = float(evolucion["merma_total"].max())
+        e_max = float(evolucion["merma_total"].abs().max())
         for _, r in evolucion.iterrows():
             ev.append({
                 "mes":     r["mes"],
@@ -273,7 +280,8 @@ def generar_reporte_control(
                 "merma_u": r["merma_unidades"],
                 "venta":   r["venta_neta"],
                 "pct":     r["pct_merma_sobre_ventas"],
-                "merma_w": _w(r["merma_total"], e_max),
+                "merma_w": _w(abs(r["merma_total"]), e_max),
+                "neg":     r["merma_total"] < 0,
             })
         if len(evolucion) >= 2:
             ult, ant = evolucion.iloc[-1], evolucion.iloc[-2]

@@ -275,6 +275,25 @@ por estado / gran super rubro / búsqueda, descarga Excel/CSV y gráficos:
 conteo y capital por estado, top quiebres por venta perdida y stock muerto
 por rubro.
 
+### Página Serie de stock
+
+Reconstruye el stock **día a día** por SKU: parte del snapshot conocido y
+camina los movimientos (ventas restan, remitos suman, ajustes según signo).
+Sirve para ver **cuándo hubo quiebre** y tramos de stock muy bajo o alto.
+
+- Elegís sucursal, rango y el **snapshot de anclaje**.
+- **KPIs**: SKUs con quiebre, días promedio en quiebre, racha más larga.
+- **Gráfico agregado**: cuántos SKUs estuvieron sin stock cada día.
+- **Tabla por SKU**: días en quiebre, % del período, racha máxima, stock
+  mín/prom/máx, con descarga Excel/CSV.
+- **Detalle**: elegís un SKU y ves su curva diaria con los tramos de quiebre
+  sombreados en rojo, más la lista de movimientos que la explican.
+
+> El método se validó contra dos snapshots reales: reconstruye el stock con
+> **99% de exactitud** a 6 días. Sobre rangos largos puede acumular desvío —
+> los SKUs cuya reconstrucción cae por debajo de 0 se avisan como
+> incoherencia (movimientos y snapshot que no reconcilian).
+
 ### Página Min / Opt / Max
 
 Políticas de inventario por SKU × sucursal (revisión periódica, order-up-to):

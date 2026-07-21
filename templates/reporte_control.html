@@ -29,11 +29,11 @@
         {% for e in evolucion %}
         <tr>
             <td>{{ e.mes }}</td>
-            <td class="num rojo">{{ e.merma | pesos }}</td>
+            <td class="num {{ 'verde' if e.neg else 'rojo' }}">{{ e.merma | pesos }}</td>
             <td class="num">{{ e.merma_u | unidades }}</td>
             <td class="num">{{ e.venta | pesos }}</td>
             <td class="num">{{ e.pct | pct }}</td>
-            <td class="barra-celda"><div class="barra" style="width: {{ e.merma_w }}%"></div></td>
+            <td class="barra-celda"><div class="barra {{ 'verde' if e.neg else '' }}" style="width: {{ e.merma_w }}%"></div></td>
         </tr>
         {% endfor %}
         </tbody>
