@@ -4,6 +4,10 @@
 projects/
 *.duckdb
 
+# Credenciales de acceso web (usuarios, hashes de contraseña, clave de
+# cookie) — nunca al repo. auth/usuarios.ejemplo.yaml sí se versiona.
+auth/usuarios.yaml
+
 # Exports generados
 exports/
 

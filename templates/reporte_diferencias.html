@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Período: <b>{{ meta.desde }} → {{ meta.hasta }}</b></span>
+    <span>Depósitos: <b>{{ meta.depositos }}</b></span>
+    <span>Valorizado a: <b>{{ meta.modo_valorizacion }}</b></span>
+    <span>Snapshot: <b>{{ meta.fecha_valorizacion }}</b></span>
+    {% if meta.sucursales %}<span>Sucursales: <b>{{ meta.sucursales }}</b></span>{% endif %}
+    {% if meta.excluidas %}<span>Excluidas: <b>{{ meta.excluidas }}</b></span>{% endif %}
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    <div class="kpi alerta"><div class="etiqueta">Faltantes</div>
+        <div class="valor">{{ kpi.faltante_val | pesos }}</div>
+        <div class="detalle">{{ kpi.faltante_u | unidades }} u. — recibido de menos</div></div>
+    <div class="kpi"><div class="etiqueta">Sobrantes</div>
+        <div class="valor verde">{{ kpi.sobrante_val | pesos }}</div>
+        <div class="detalle">{{ kpi.sobrante_u | unidades }} u. — recibido de más</div></div>
+    <div class="kpi"><div class="etiqueta">Neto (falt. − sobr.)</div>
+        <div class="valor {% if kpi.neto_val > 0 %}rojo{% else %}verde{% endif %}">
+            {{ kpi.neto_val | pesos }}</div>
+        <div class="detalle">{{ kpi.neto_u | unidades }} u.</div></div>
+    <div class="kpi"><div class="etiqueta">Remitos con diferencia</div>
+        <div class="valor">{{ kpi.remitos | unidades }}</div>
+        <div class="detalle">{{ kpi.skus | unidades }} SKUs distintos</div></div>
+</div>
+
+{% if not sucursales %}
+<div class="seccion"><p style="color:var(--gris)">
+    Sin diferencias de camión en el período con los filtros aplicados.</p></div>
+{% endif %}
+
+{% if sucursales %}
+<div class="seccion">
+    <h2>Por sucursal
+        <span style="font-weight:400;color:var(--gris);font-size:9pt">
+            (las {{ sucursales | length }} de mayor faltante)</span></h2>
+    <table>
+        <thead><tr>
+            <th>Sucursal</th>
+            <th class="num">Faltante u.</th><th class="num">Faltante $</th>
+            <th class="barra-celda">Faltante ▮ / Sobrante ▮</th>
+            <th class="num">Sobrante u.</th><th class="num">Sobrante $</th>
+            <th class="num">Neto $</th><th class="num">Remitos</th>
+        </tr></thead>
+        <tbody>
+        {% for s in sucursales %}
+        <tr>
+            <td>{{ s.sucursal }}</td>
+            <td class="num">{{ s.faltante_u | unidades }}</td>
+            <td class="num rojo">{{ s.faltante_val | pesos }}</td>
+            <td class="barra-celda">
+                <div class="barra" style="width:{{ s.faltante_w }}%"></div>
+                <div class="barra verde" style="width:{{ s.sobrante_w }}%;margin-top:2px"></div>
+            </td>
+            <td class="num">{{ s.sobrante_u | unidades }}</td>
+            <td class="num verde">{{ s.sobrante_val | pesos }}</td>
+            <td class="num {% if s.neto_val > 0 %}rojo{% else %}verde{% endif %}">
+                {{ s.neto_val | pesos }}</td>
+            <td class="num">{{ s.remitos | unidades }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if meses %}
+<div class="seccion">
+    <h2>Evolución mensual</h2>
+    <table>
+        <thead><tr>
+            <th>Mes</th>
+            <th class="num">Faltante u.</th><th class="num">Faltante $</th>
+            <th class="num">Sobrante u.</th><th class="num">Sobrante $</th>
+            <th class="num">Neto $</th><th class="num">Remitos</th>
+        </tr></thead>
+        <tbody>
+        {% for m in meses %}
+        <tr>
+            <td>{{ m.periodo }}</td>
+            <td class="num">{{ m.faltante_u | unidades }}</td>
+            <td class="num rojo">{{ m.faltante_val | pesos }}</td>
+            <td class="num">{{ m.sobrante_u | unidades }}</td>
+            <td class="num verde">{{ m.sobrante_val | pesos }}</td>
+            <td class="num {% if m.neto_val > 0 %}rojo{% else %}verde{% endif %}">
+                {{ m.neto_val | pesos }}</td>
+            <td class="num">{{ m.remitos | unidades }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if skus %}
+<div class="seccion">
+    <h2>SKUs que más pesan
+        <span style="font-weight:400;color:var(--gris);font-size:9pt">
+            (top {{ skus | length }} por faltante valorizado)</span></h2>
+    <table>
+        <thead><tr>
+            <th>Código</th><th>Descripción</th><th>Rubro</th>
+            <th class="num">Faltante u.</th><th class="num">Faltante $</th>
+            <th class="num">Sobrante u.</th><th class="num">Neto $</th>
+        </tr></thead>
+        <tbody>
+        {% for s in skus %}
+        <tr>
+            <td>{{ s.codigo }}</td>
+            <td>{{ s.descripcion }}</td>
+            <td>{{ s.rubro }}</td>
+            <td class="num">{{ s.faltante_u | unidades }}</td>
+            <td class="num rojo">{{ s.faltante_val | pesos }}</td>
+            <td class="num">{{ s.sobrante_u | unidades }}</td>
+            <td class="num {% if s.neto_val > 0 %}rojo{% else %}verde{% endif %}">
+                {{ s.neto_val | pesos }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

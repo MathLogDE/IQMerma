@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Período: <b>{{ meta.fecha_desde }} → {{ meta.fecha_hasta }}</b></span>
+    <span>Nivel: <b>{{ meta.nivel }}</b></span>
+    <span>Método: <b>{{ meta.metodo }}</b></span>
+    {% if meta.sucursales_filtro %}<span>Sucursales: <b>{{ meta.sucursales_filtro }}</b></span>{% endif %}
+    {% if meta.filtros %}<span>Filtros: <b>{{ meta.filtros }}</b></span>{% endif %}
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    <div class="kpi"><div class="etiqueta">% Avance promedio</div>
+        <div class="valor">{{ resumen.promedio | pct if resumen.promedio is not none else "—" }}</div></div>
+    <div class="kpi"><div class="etiqueta">Mínimo</div>
+        <div class="valor">{{ resumen.minimo | pct if resumen.minimo is not none else "—" }}</div></div>
+    <div class="kpi"><div class="etiqueta">Máximo</div>
+        <div class="valor">{{ resumen.maximo | pct if resumen.maximo is not none else "—" }}</div></div>
+</div>
+
+{% if filas %}
+<div class="seccion">
+    <h2>Avance de conteo por {{ nivel_label | lower }} y sucursal</h2>
+    <table>
+        <thead><tr>
+            <th>{{ nivel_label }}</th>
+            {% for s in sucursales %}<th class="num">{{ s.etiqueta }}</th>{% endfor %}
+        </tr></thead>
+        <tbody>
+        {% for f in filas %}
+        <tr>
+            <td>{{ f.etiqueta }}</td>
+            {% for v in f.valores %}
+            <td class="num">{{ v }}
+                <div class="barra-celda"><div class="barra gris" style="width:{{ f.barras[loop.index0] }}%"></div></div>
+            </td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="seccion"><p>Sin datos para el período y filtros elegidos.</p></div>
+{% endif %}
+{% endblock %}

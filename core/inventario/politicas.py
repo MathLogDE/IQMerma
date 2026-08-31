@@ -38,10 +38,12 @@ Uso:
 
 import math
 
-import duckdb
 import pandas as pd
 
-from core.comun import conectar as _get_connection, mapa_estructura as _mapa_estructura
+from core.comun import (
+    conectar, adjuntar_rubros, precios_snapshot, snapshot_usado,
+    validar_modo_valorizacion, DEPOSITOS_DISTRIBUCION,
+)
 
 Z_POR_CLASE = {"A": 1.65, "B": 1.28, "C": 0.84}
 ESTADOS_POLITICA = ("reponer", "ok", "exceso", "sin_demanda")
@@ -70,7 +72,7 @@ def calcular_politicas(
         raise ValueError("dias_demanda debe ser al menos 28 (4 semanas)")
     z_por_clase = z_por_clase or Z_POR_CLASE
 
-    conn = _get_connection(proyecto)
+    conn = conectar(proyecto)
     try:
         # --- snapshot -----------------------------------------------------
         if fecha_stock:
@@ -207,11 +209,7 @@ def calcular_politicas(
 
     # atributos antes del fallback por rubro
     df = df.merge(df_art, on="codigo", how="left")
-    mapa = _mapa_estructura(df_est)
-    df["_clave"] = df["rubro"].astype("string").str.strip()
-    df = df.merge(mapa, on="_clave", how="left").drop(columns=["_clave"])
-    df["rubro"] = df["rubro_desc"].fillna(df["rubro"])
-    df = df.drop(columns=["rubro_desc"])
+    df = adjuntar_rubros(df, df_est)
 
     ciclo_rubro = df.groupby("rubro")["ciclo_dias"].median()
     falta = df["ciclo_dias"].isna()
@@ -290,3 +288,107 @@ def resumen_politicas(df: pd.DataFrame) -> dict:
                               if df["ciclo_dias"].notna().any() else None),
         "matriz_abc_xyz":    df.groupby(["clase_abc", "clase_xyz"]).size().to_dict(),
     }
+
+
+def comparar_clase_abc(
+    proyecto: str,
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    modo_valorizacion: str = "lista_1",
+    fecha_valorizacion: str | None = None,
+    depositos_distribucion: tuple[str, ...] | list[str] = DEPOSITOS_DISTRIBUCION,
+) -> pd.DataFrame:
+    """
+    Compara la clase ABC que trae el ERP (`articulos.clase`) contra la que
+    calcula el sistema por participación en venta valorizada (regla 80/95).
+
+    El ABC de `calcular_politicas()` es por (SKU, sucursal) — no es
+    comparable 1:1 contra el tag del ERP, que es un valor único por SKU. Acá
+    se recalcula la misma regla pero sumando la venta de **todas las
+    sucursales**, para tener una clase por SKU comparable contra la del ERP.
+
+    Args:
+        fecha_desde/hasta: rango de ventas a considerar (None = toda la
+                           historia).
+        modo_valorizacion: "costo" o "lista_1".
+        fecha_valorizacion: snapshot de precios (default: el más reciente).
+        depositos_distribucion: códigos de depósito que cuentan como
+                                "distribución" para stock_distribucion (default:
+                                DEPOSITOS_DISTRIBUCION). No se usa `es_logistica`
+                                porque ese flag marca otra cosa (outlets,
+                                roturas, e-commerce), no los centros de
+                                distribución reales.
+
+    Returns:
+        DataFrame por SKU: codigo, descripcion, clase_erp, clase_calculada,
+        coincide, venta_valorizada, stock_distribucion (unidades en
+        `depositos_distribucion`, al mismo snapshot usado para el precio —
+        "qué hay disponible para distribución inmediata"). Ordenado por
+        venta_valorizada desc.
+        attrs: fecha_valorizacion.
+    """
+    validar_modo_valorizacion(modo_valorizacion)
+    depositos_distribucion = list(depositos_distribucion or [])
+    conn = conectar(proyecto)
+    try:
+        filtro_desde = "AND m.fecha >= $desde::DATE" if fecha_desde else ""
+        filtro_hasta = "AND m.fecha <= $hasta::DATE" if fecha_hasta else ""
+        params = {}
+        if fecha_desde:
+            params["desde"] = str(pd.to_datetime(fecha_desde).date())
+        if fecha_hasta:
+            params["hasta"] = str(pd.to_datetime(fecha_hasta).date())
+
+        df_ven = conn.execute(f"""
+            SELECT m.codigo, -SUM(m.diferencia) AS unidades_vendidas
+            FROM movimientos m
+            JOIN tipos_categoria t ON m.tipo = t.tipo AND t.es_venta
+            WHERE 1=1 {filtro_desde} {filtro_hasta}
+            GROUP BY 1
+        """, params if params else []).df()
+
+        df_val = precios_snapshot(conn, fecha_valorizacion)
+        fv_usada = snapshot_usado(conn, fecha_valorizacion)
+        df_art = conn.execute("SELECT codigo, descripcion, clase FROM articulos").df()
+
+        # Stock en los depósitos de distribución elegidos, al mismo snapshot
+        # que el precio: así "stock_distribucion" y "venta_valorizada" quedan
+        # a la misma fecha.
+        if fv_usada and depositos_distribucion:
+            df_dist = conn.execute("""
+                SELECT codigo, SUM(stock)::DOUBLE AS stock_distribucion
+                FROM stock_sucursal
+                WHERE codigodepo IN (SELECT unnest($depos)) AND fecha_snapshot = $fv::DATE
+                GROUP BY 1
+            """, {"depos": depositos_distribucion, "fv": fv_usada}).df()
+        else:
+            df_dist = pd.DataFrame(columns=["codigo", "stock_distribucion"])
+    finally:
+        conn.close()
+
+    unit_col = "costo" if modo_valorizacion == "costo" else "lista_1"
+    val = df_val.set_index("codigo")[unit_col]
+    df_ven["unidades_vendidas"] = df_ven["unidades_vendidas"].fillna(0.0).astype(float)
+    df_ven["venta_valorizada"] = (df_ven["unidades_vendidas"].clip(lower=0)
+                                  * df_ven["codigo"].map(val)).fillna(0.0)
+
+    df_ven["clase_calculada"] = "C"
+    total = df_ven["venta_valorizada"].sum()
+    if total > 0:
+        orden = df_ven.sort_values("venta_valorizada", ascending=False)
+        acum = orden["venta_valorizada"].cumsum() / total
+        df_ven.loc[acum[acum <= 0.80].index, "clase_calculada"] = "A"
+        df_ven.loc[acum[(acum > 0.80) & (acum <= 0.95)].index, "clase_calculada"] = "B"
+
+    df = df_ven.merge(df_art, on="codigo", how="left")
+    df["clase_erp"] = df["clase"].fillna("(sin dato)")
+    df["coincide"] = df["clase_erp"] == df["clase_calculada"]
+    df = df.merge(df_dist, on="codigo", how="left")
+    df["stock_distribucion"] = df["stock_distribucion"].fillna(0.0)
+
+    cols = ["codigo", "descripcion", "clase_erp", "clase_calculada", "coincide",
+            "venta_valorizada", "stock_distribucion"]
+    df = (df[cols].sort_values("venta_valorizada", ascending=False)
+          .reset_index(drop=True))
+    df.attrs["fecha_valorizacion"] = fv_usada
+    return df

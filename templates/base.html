@@ -29,6 +29,9 @@
         body { padding: 0; max-width: none; }
         .seccion { break-inside: avoid; }
         a { color: inherit; text-decoration: none; }
+        /* Sin esto el navegador descarta fondos y rellenos al imprimir, y las
+           barras y los gráficos salen en blanco. */
+        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
 
     /* --- encabezado --- */
@@ -37,10 +40,10 @@
         padding-bottom: 12px; margin-bottom: 18px;
         display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
     }
-    header .titulos h1 { font-size: 16pt; letter-spacing: -0.02em; }
-    header .titulos h1 span { color: var(--acento); }
+    header .titulos img.logo-iq { height: 24px; display: block; margin-bottom: 6px; }
+    header .titulos h1 { font-size: 14pt; letter-spacing: -0.02em; color: var(--gris); font-weight: 600; }
     header .cliente { font-size: 10pt; font-weight: 600; margin-top: 2px; }
-    header img.logo { max-height: 52px; max-width: 190px; object-fit: contain; }
+    header img.logo { max-height: 68px; max-width: 230px; object-fit: contain; }
     .meta { display: flex; flex-wrap: wrap; gap: 4px 26px; margin: 0 0 14px; color: var(--gris); font-size: 9pt; }
     .meta b { color: var(--tinta); font-weight: 600; }
 
@@ -71,6 +74,20 @@
     .verde { color: var(--verde); font-weight: 600; }
     tfoot td { border-top: 2px solid var(--tinta); border-bottom: none; font-weight: 700; background: var(--fondo) !important; }
 
+    /* --- gráficos SVG --- */
+    .grafico {
+        margin: 6px 0 14px;
+        padding: 10px 12px 4px;
+        background: var(--fondo);
+        border: 1px solid var(--linea);
+        border-radius: 6px;
+        break-inside: avoid;
+    }
+    .grafico svg { display: block; margin: 0 auto; }
+    .pie-grafico {
+        font-size: 8pt; color: var(--gris); margin-bottom: 6px;
+    }
+
     /* --- barras CSS --- */
     .barra-celda { min-width: 110px; }
     .barra { height: 9px; border-radius: 3px; background: var(--acento); min-width: 2px; }
@@ -82,13 +99,16 @@
         margin-top: 26px; padding-top: 8px; border-top: 1px solid var(--linea);
         color: var(--gris); font-size: 8pt; display: flex; justify-content: space-between;
     }
+
+    {% block estilos %}{% endblock %}
 </style>
 </head>
 <body>
 
 <header>
     <div class="titulos">
-        <h1>Merma<span>IQ</span> — {{ titulo }}</h1>
+        {% if logo_iqmerma %}<img class="logo-iq" src="{{ logo_iqmerma }}" alt="IQMerma">{% endif %}
+        <h1>{{ titulo }}</h1>
         {% if branding.nombre %}<div class="cliente">{{ branding.nombre }}</div>{% endif %}
         {% for linea in branding.datos %}
         <div style="font-size:8.5pt;color:var(--gris)">{{ linea }}</div>

@@ -17,7 +17,9 @@ unidades de movimientos (es_venta / es_merma) valorizadas al snapshot.
 import duckdb
 import pandas as pd
 
-from core.comun import conectar as _get_connection, mapa_estructura as _mapa_estructura
+from core.comun import (
+    conectar, mapa_estructura, precios_snapshot, snapshot_usado, adjuntar_rubros,
+)
 
 
 def analizar_margenes(
@@ -36,7 +38,7 @@ def analizar_margenes(
         margen_bruto, merma_costo, merma_sobre_margen (%).
         attrs: fecha_valorizacion.
     """
-    conn = _get_connection(proyecto)
+    conn = conectar(proyecto)
     try:
         filtro_depo = "AND m.codigodepo = $depo" if codigodepo else ""
         filtro_desde = "AND m.fecha >= $desde::DATE" if fecha_desde else ""
@@ -69,26 +71,8 @@ def analizar_margenes(
             GROUP BY 1
         """, params if params else []).df()
 
-        if fecha_valorizacion:
-            fv = str(pd.to_datetime(fecha_valorizacion).date())
-            df_val = conn.execute("""
-                SELECT codigo, costo, lista_1 FROM stock_sucursal
-                WHERE fecha_snapshot <= $fv::DATE
-                QUALIFY row_number() OVER (
-                    PARTITION BY codigo
-                    ORDER BY fecha_snapshot DESC, fecha_ingesta DESC, id DESC
-                ) = 1
-            """, {"fv": fv}).df()
-        else:
-            df_val = conn.execute("""
-                SELECT codigo, costo, lista_1 FROM stock_sucursal
-                QUALIFY row_number() OVER (
-                    PARTITION BY codigo
-                    ORDER BY fecha_snapshot DESC, fecha_ingesta DESC, id DESC
-                ) = 1
-            """).df()
-
-        fv_usada = conn.execute("SELECT MAX(fecha_snapshot) FROM stock_sucursal").fetchone()[0]
+        df_val = precios_snapshot(conn, fecha_valorizacion)
+        fv_usada = snapshot_usado(conn, fecha_valorizacion)
 
         df_art = conn.execute(
             "SELECT codigo, descripcion, rubro, marca FROM articulos").df()
@@ -122,11 +106,7 @@ def analizar_margenes(
     ).round(2)
 
     df = df.merge(df_art, on="codigo", how="left")
-    mapa = _mapa_estructura(df_est)
-    df["_clave"] = df["rubro"].astype("string").str.strip()
-    df = df.merge(mapa, on="_clave", how="left").drop(columns=["_clave"])
-    df["rubro"] = df["rubro_desc"].fillna(df["rubro"])
-    df = df.drop(columns=["rubro_desc"])
+    df = adjuntar_rubros(df, df_est)
 
     cols = ["codigo", "descripcion", "rubro", "marca", "super_rubro",
             "gran_super_rubro", "costo", "lista_1", "margen_unitario",
@@ -136,7 +116,7 @@ def analizar_margenes(
     df = (df[cols]
           .sort_values("margen_bruto", ascending=False)
           .reset_index(drop=True))
-    df.attrs["fecha_valorizacion"] = str(fv_usada) if fv_usada else None
+    df.attrs["fecha_valorizacion"] = fv_usada
     return df
 
 
@@ -149,7 +129,7 @@ def evolucion_costos(proyecto: str) -> pd.DataFrame:
         DataFrame: fecha_snapshot, gran_super_rubro, costo_mediano,
         lista_mediana, skus. attrs["n_snapshots"].
     """
-    conn = _get_connection(proyecto)
+    conn = conectar(proyecto)
     try:
         df = conn.execute("""
             SELECT s.fecha_snapshot, s.codigo,
@@ -170,7 +150,7 @@ def evolucion_costos(proyecto: str) -> pd.DataFrame:
         vacio.attrs["n_snapshots"] = 0
         return vacio
 
-    mapa = _mapa_estructura(df_est)
+    mapa = mapa_estructura(df_est)
     rubro_art = df_art.set_index("codigo")["rubro"].astype("string").str.strip()
     clave = df["codigo"].map(rubro_art)
     df["gran_super_rubro"] = clave.map(

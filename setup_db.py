@@ -37,9 +37,25 @@ def get_db_path(project_name: str) -> Path:
     return project_dir / "data.duckdb"
 
 
+# Seteado una sola vez al arrancar ui/app_cliente.py (ver ese archivo): fuerza
+# todas las conexiones nuevas de ESTE proceso a solo-lectura. No afecta a la
+# instancia admin porque cada `python -m streamlit run ...` es un proceso
+# Python separado — este flag nunca cruza procesos.
+_SOLO_LECTURA = False
+
+
+def activar_modo_solo_lectura() -> None:
+    global _SOLO_LECTURA
+    _SOLO_LECTURA = True
+
+
+def modo_solo_lectura() -> bool:
+    return _SOLO_LECTURA
+
+
 def get_connection(project_name: str) -> duckdb.DuckDBPyConnection:
     db_path = get_db_path(project_name)
-    return duckdb.connect(str(db_path))
+    return duckdb.connect(str(db_path), read_only=_SOLO_LECTURA)
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +267,7 @@ DEFAULT_TIPOS_CATEGORIA = [
     ("RE",   "REM", "Remitido",       False, False, 5),  # Remito externo (recepción)
     ("RI",   "REM", "Remitido",       False, False, 5),  # Remito interno (transferencia)
     ("RDC",  "REM", "Remitido",       False, False, 5),  # Remito devolución compra
+    ("TR",   "AJU", "Transformación", True,  False, 6),  # Producción simple: baja SKU original / alta SKU liquidación
 ]
 
 
@@ -279,6 +296,29 @@ def _migrar(conn: duckdb.DuckDBPyConnection) -> None:
                 ventas_tipos,
             )
         print("  [migración] tipos_categoria += es_venta")
+
+    # tipos_categoria: TR (Transformación) — nuevo subtipo AJU del ERP
+    # (producción simple: da de baja un SKU y da de alta el SKU de
+    # liquidación que lo reemplaza, en dos filas con tipo='TR').
+    if "tipos_categoria" in _tablas(conn):
+        total = conn.execute("SELECT COUNT(*) FROM tipos_categoria").fetchone()[0]
+        ya_existe = total and conn.execute(
+            "SELECT COUNT(*) FROM tipos_categoria WHERE tipo = 'TR'"
+        ).fetchone()[0]
+        # total == 0: DB nueva, todavía sin sembrar — la deja para
+        # `_sembrar_tipos_categoria`, que va a insertar TR junto con el
+        # resto del catálogo por defecto.
+        if total and not ya_existe:
+            from datetime import datetime, timezone
+            fila_tr = next(f for f in DEFAULT_TIPOS_CATEGORIA if f[0] == "TR")
+            t, tm, cat, em, ev, o = fila_tr
+            conn.execute(
+                "INSERT INTO tipos_categoria "
+                "(tipo, tipomov, categoria, es_merma, es_venta, orden, fecha_ingesta) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [t, tm, cat, em, ev, o, datetime.now(timezone.utc)],
+            )
+            print("  [migración] tipos_categoria += TR (Transformación)")
 
 
 def _tablas(conn: duckdb.DuckDBPyConnection) -> set[str]:

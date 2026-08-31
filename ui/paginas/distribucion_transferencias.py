@@ -48,32 +48,20 @@ def render(proyecto):
                 st.info("No hay cruces exceso ↔ reposición entre sucursales con estos parámetros.")
             else:
                 # Filtros
-                fc1, fc2, fc3, fc4 = st.columns(4)
+                fc1, fc2 = st.columns(2)
                 with fc1:
                     f_ori = st.multiselect(
                         "Origen", sorted(df_full["origen"].unique().tolist()), key="tr_f_ori")
                 with fc2:
                     f_des = st.multiselect(
                         "Destino", sorted(df_full["destino"].unique().tolist()), key="tr_f_des")
-                with fc3:
-                    f_gsr = st.multiselect(
-                        "Gran Super Rubro",
-                        sorted(df_full["gran_super_rubro"].dropna().unique().tolist()),
-                        key="tr_f_gsr")
-                with fc4:
-                    f_txt = st.text_input("Buscar SKU / descripción", key="tr_f_txt")
 
                 df = df_full
                 if f_ori:
                     df = df[df["origen"].isin(f_ori)]
                 if f_des:
                     df = df[df["destino"].isin(f_des)]
-                if f_gsr:
-                    df = df[df["gran_super_rubro"].isin(f_gsr)]
-                if f_txt:
-                    t = f_txt.strip().lower()
-                    df = df[df["codigo"].str.lower().str.contains(t, na=False)
-                            | df["descripcion"].str.lower().str.contains(t, na=False)]
+                df, _ = filtros_resultado(df, "tr_f", dimensiones=("gran_super_rubro",))
 
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("Sugerencias", f"{len(df):,}")
@@ -113,9 +101,8 @@ def render(proyecto):
                 ))
                 fig.update_layout(
                     height=420,
-                    plot_bgcolor="#0f1117", paper_bgcolor="#0f1117",
-                    font=dict(color="#ccd6f6", family="IBM Plex Mono"),
                     xaxis=dict(title="Destino"), yaxis=dict(title="Origen"),
+                    **layout_grafico(),
                 )
                 st.plotly_chart(fig, width="stretch")
 
@@ -127,8 +114,5 @@ def render(proyecto):
                     "dias_demanda": dias_demanda,
                 }
                 html_t = generar_reporte_transferencias(proyecto, meta_t, df)
-                st.download_button(
-                    "🖨 Descargar reporte (HTML imprimible)", html_t.encode("utf-8"),
-                    f"transferencias_{meta_t['fecha_stock']}.html",
-                    "text/html", key="dl_rep_transf",
-                )
+                boton_reporte(html_t, f"transferencias_{meta_t['fecha_stock']}.html",
+                              "dl_rep_transf")

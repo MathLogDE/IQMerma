@@ -18,6 +18,16 @@ pandas==3.0.3
 # NumPy: operaciones numéricas vectorizadas (dependencia de pandas)
 numpy==2.4.6
 
+# --- Forecasting ---------------------------------------------
+# statsmodels: Exponential Smoothing (Holt-Winters) y SARIMA para el
+# forecast de ventas — compiten contra el modelo estacional robusto
+# hand-rolled, por grupo, midiendo MAPE de backtest (core/forecasting/demanda.py).
+statsmodels==0.14.6
+
+# scikit-learn: kNN para "prestar" patrón estacional/tendencia a grupos
+# con historia corta (< 12 meses) que hoy quedan excluidos del forecast.
+scikit-learn==1.9.0
+
 # --- Lectura y escritura de Excel --------------------------
 # openpyxl: leer los archivos de entrada del ERP y generar reportes
 # Excel de salida con formato, colores y estilos.
@@ -41,3 +51,9 @@ Jinja2==3.1.6
 # --- Utilidades --------------------------------------------
 # python-dateutil: manejo flexible de fechas, rangos y períodos
 python-dateutil==2.9.0.post0
+
+# --- Acceso web (instancia cliente, solo lectura) -----------
+# streamlit-authenticator: login por usuario/contraseña + cookie de sesión
+# para ui/app_cliente.py (trae bcrypt y PyYAML como dependencias).
+streamlit-authenticator==0.4.2
+PyYAML==6.0.3

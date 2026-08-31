@@ -19,14 +19,13 @@ def render(proyecto):
     if sucursales.empty:
         st.info("No hay movimientos cargados.")
     else:
-        TODAS_M = "__todas__"
         suc_label = dict(zip(sucursales["codigodepo"], sucursales["nombre"].fillna("")))
         fmin, fmax = rango_disponible(proyecto)
         c1, c2, c3 = st.columns(3)
         with c1:
             suc_sel = st.selectbox(
-                "Sucursal", [TODAS_M] + sucursales["codigodepo"].tolist(),
-                format_func=lambda c: ("⊕ Todas" if c == TODAS_M
+                "Sucursal", [TODAS] + sucursales["codigodepo"].tolist(),
+                format_func=lambda c: ("⊕ Todas" if c == TODAS
                                        else f"{c} — {suc_label.get(c, '')}".strip(" —")),
                 key="mg_suc")
         with c2:
@@ -41,7 +40,7 @@ def render(proyecto):
                 try:
                     df_mg = analizar_margenes(
                         proyecto,
-                        codigodepo=None if suc_sel == TODAS_M else suc_sel,
+                        codigodepo=None if suc_sel == TODAS else suc_sel,
                         fecha_desde=str(f_desde), fecha_hasta=str(f_hasta),
                     )
                     st.session_state["df_margenes"] = df_mg
@@ -52,22 +51,7 @@ def render(proyecto):
             df_full = st.session_state["df_margenes"]
             st.markdown("---")
 
-            fc1, fc2 = st.columns(2)
-            with fc1:
-                f_gsr = st.multiselect(
-                    "Gran Super Rubro",
-                    sorted(df_full["gran_super_rubro"].dropna().unique().tolist()),
-                    key="mg_f_gsr")
-            with fc2:
-                f_txt = st.text_input("Buscar SKU / descripción", key="mg_f_txt")
-
-            df = df_full
-            if f_gsr:
-                df = df[df["gran_super_rubro"].isin(f_gsr)]
-            if f_txt:
-                t = f_txt.strip().lower()
-                df = df[df["codigo"].str.lower().str.contains(t, na=False)
-                        | df["descripcion"].str.lower().str.contains(t, na=False)]
+            df, _ = filtros_resultado(df_full, "mg_f", dimensiones=("gran_super_rubro",))
 
             venta_t = df["venta_valorizada"].sum()
             margen_t = df["margen_bruto"].sum()
@@ -100,14 +84,12 @@ def render(proyecto):
                             marker=dict(size=7), yaxis="y2")
             fig.update_layout(
                 height=420,
-                plot_bgcolor="#0f1117", paper_bgcolor="#0f1117",
-                font=dict(color="#ccd6f6", family="IBM Plex Mono"),
-                xaxis=dict(tickangle=-30, gridcolor="#1e2130"),
-                yaxis=dict(title="Margen bruto $", gridcolor="#1e2130"),
+                xaxis=dict(tickangle=-30, gridcolor=color_grilla()),
+                yaxis=dict(title="Margen bruto $", gridcolor=color_grilla()),
                 yaxis2=dict(title="Merma s/margen", overlaying="y", side="right",
-                            gridcolor="#1e2130", ticksuffix="%"),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                            gridcolor=color_grilla(), ticksuffix="%"),
                 margin=dict(b=110),
+                **layout_grafico(),
             )
             st.plotly_chart(fig, width="stretch")
 
@@ -151,10 +133,8 @@ def render(proyecto):
                                     line=dict(color=PALETA[i % len(PALETA)], width=2))
                 fig.update_layout(
                     height=420,
-                    plot_bgcolor="#0f1117", paper_bgcolor="#0f1117",
-                    font=dict(color="#ccd6f6", family="IBM Plex Mono"),
-                    xaxis=dict(gridcolor="#1e2130"),
-                    yaxis=dict(title="Costo mediano $", gridcolor="#1e2130"),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                    xaxis=dict(gridcolor=color_grilla()),
+                    yaxis=dict(title="Costo mediano $", gridcolor=color_grilla()),
+                    **layout_grafico(),
                 )
                 st.plotly_chart(fig, width="stretch")

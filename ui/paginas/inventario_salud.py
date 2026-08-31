@@ -27,13 +27,12 @@ def render(proyecto):
     if not snapshots or sucursales.empty:
         st.info("Se necesita al menos un snapshot de stock y movimientos cargados.")
     else:
-        TODAS_S = "__todas__"
         suc_label = dict(zip(sucursales["codigodepo"], sucursales["nombre"].fillna("")))
         c0, c1, c2 = st.columns([2, 1, 1])
         with c0:
             suc_sel = st.selectbox(
-                "Sucursal", [TODAS_S] + sucursales["codigodepo"].tolist(),
-                format_func=lambda c: ("⊕ Todas las sucursales" if c == TODAS_S
+                "Sucursal", [TODAS] + sucursales["codigodepo"].tolist(),
+                format_func=lambda c: ("⊕ Todas las sucursales" if c == TODAS
                                        else f"{c} — {suc_label.get(c, '')}".strip(" —")),
                 key="salud_suc",
             )
@@ -64,7 +63,7 @@ def render(proyecto):
                 try:
                     df_salud = analizar_stock(
                         proyecto,
-                        codigodepo=None if suc_sel == TODAS_S else suc_sel,
+                        codigodepo=None if suc_sel == TODAS else suc_sel,
                         fecha_stock=fecha_stock,
                         dias_ventana=dias_ventana,
                         cobertura_min=banda[0],
@@ -80,32 +79,12 @@ def render(proyecto):
 
             st.markdown("---")
             # --- Filtros -----------------------------------------------------
-            fc1, fc2, fc3 = st.columns(3)
-            with fc1:
-                f_estado = st.multiselect(
-                    "Estado", list(ESTADOS),
-                    format_func=lambda e: ETIQUETA_ESTADO[e], key="salud_f_estado",
-                )
-            with fc2:
-                f_gsr = st.multiselect(
-                    "Gran Super Rubro",
-                    sorted(df_full["gran_super_rubro"].dropna().unique().tolist()),
-                    key="salud_f_gsr",
-                )
-            with fc3:
-                f_texto = st.text_input("Buscar SKU / descripción", key="salud_f_txt")
-
-            df = df_full
-            if f_estado:
-                df = df[df["estado"].isin(f_estado)]
-            if f_gsr:
-                df = df[df["gran_super_rubro"].isin(f_gsr)]
-            if f_texto:
-                t = f_texto.strip().lower()
-                df = df[
-                    df["codigo"].str.lower().str.contains(t, na=False)
-                    | df["descripcion"].str.lower().str.contains(t, na=False)
-                ]
+            f_estado = st.multiselect(
+                "Estado", list(ESTADOS),
+                format_func=lambda e: ETIQUETA_ESTADO[e], key="salud_f_estado",
+            )
+            df = df_full[df_full["estado"].isin(f_estado)] if f_estado else df_full
+            df, _ = filtros_resultado(df, "salud_f", dimensiones=("gran_super_rubro",))
 
             # --- KPIs ----------------------------------------------------------
             r = resumen_salud(df)
@@ -149,11 +128,6 @@ def render(proyecto):
             botones_descarga(df[cols], "salud_stock", "salud")
 
             # --- Gráficos -----------------------------------------------------------
-            layout_oscuro = dict(
-                plot_bgcolor="#0f1117", paper_bgcolor="#0f1117",
-                font=dict(color="#ccd6f6", family="IBM Plex Mono"),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            )
             g1, g2 = st.columns(2)
             with g1:
                 st.markdown("#### SKU-sucursal por estado")
@@ -162,8 +136,8 @@ def render(proyecto):
                     x=[ETIQUETA_ESTADO[e] for e in conteo.index], y=conteo.values,
                     marker_color=[COLOR_ESTADO[e] for e in conteo.index],
                 ))
-                fig.update_layout(height=340, xaxis=dict(gridcolor="#1e2130"),
-                                  yaxis=dict(gridcolor="#1e2130"), **layout_oscuro)
+                fig.update_layout(height=340, xaxis=dict(gridcolor=color_grilla()),
+                                  yaxis=dict(gridcolor=color_grilla()), **layout_grafico())
                 st.plotly_chart(fig, width="stretch")
             with g2:
                 st.markdown("#### Capital en stock por estado")
@@ -172,8 +146,8 @@ def render(proyecto):
                     x=[ETIQUETA_ESTADO[e] for e in valor.index], y=valor.values,
                     marker_color=[COLOR_ESTADO[e] for e in valor.index],
                 ))
-                fig.update_layout(height=340, xaxis=dict(gridcolor="#1e2130"),
-                                  yaxis=dict(gridcolor="#1e2130"), **layout_oscuro)
+                fig.update_layout(height=340, xaxis=dict(gridcolor=color_grilla()),
+                                  yaxis=dict(gridcolor=color_grilla()), **layout_grafico())
                 st.plotly_chart(fig, width="stretch")
 
             df_q = df[df["estado"] == "quiebre"]
@@ -187,9 +161,9 @@ def render(proyecto):
                     orientation="h", marker_color="#ff6b6b",
                 ))
                 fig.update_layout(height=440,
-                                  xaxis=dict(title="$ perdidos por día", gridcolor="#1e2130"),
-                                  yaxis=dict(autorange="reversed", gridcolor="#1e2130"),
-                                  **layout_oscuro)
+                                  xaxis=dict(title="$ perdidos por día", gridcolor=color_grilla()),
+                                  yaxis=dict(autorange="reversed", gridcolor=color_grilla()),
+                                  **layout_grafico())
                 st.plotly_chart(fig, width="stretch")
 
             df_m = df[df["estado"] == "muerto"]
@@ -201,24 +175,20 @@ def render(proyecto):
                     x=df_gm.values, y=df_gm.index, orientation="h", marker_color="#8892b0",
                 ))
                 fig.update_layout(height=400,
-                                  xaxis=dict(title="$ inmovilizados", gridcolor="#1e2130"),
-                                  yaxis=dict(autorange="reversed", gridcolor="#1e2130"),
-                                  **layout_oscuro)
+                                  xaxis=dict(title="$ inmovilizados", gridcolor=color_grilla()),
+                                  yaxis=dict(autorange="reversed", gridcolor=color_grilla()),
+                                  **layout_grafico())
                 st.plotly_chart(fig, width="stretch")
 
             # --- Reporte imprimible --------------------------------------------
             st.markdown("---")
             meta_s = {
                 "proyecto": proyecto,
-                "sucursal": ("Todas las sucursales" if suc_sel == TODAS_S
+                "sucursal": ("Todas las sucursales" if suc_sel == TODAS
                              else f"{suc_sel} — {suc_label.get(suc_sel, '')}".strip(" —")),
                 "fecha_stock": df_full.attrs.get("fecha_stock", ""),
                 "dias_ventana": df_full.attrs.get("dias_ventana", ""),
                 "banda": f"{banda[0]}–{banda[1]} días",
             }
             html_s = generar_reporte_salud(proyecto, meta_s, df, r, ETIQUETA_ESTADO)
-            st.download_button(
-                "🖨 Descargar reporte (HTML imprimible)", html_s.encode("utf-8"),
-                f"salud_stock_{meta_s['fecha_stock']}.html",
-                "text/html", key="dl_rep_salud",
-            )
+            boton_reporte(html_s, f"salud_stock_{meta_s['fecha_stock']}.html", "dl_rep_salud")

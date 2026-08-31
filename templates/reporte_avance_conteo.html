@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Alcance: <b>{{ meta.sucursal }}</b></span>
+    <span>Período: <b>{{ meta.fecha_desde }} → {{ meta.fecha_hasta }}</b></span>
+    <span>Valorización: <b>{{ meta.modo }}</b> (stock del <b>{{ meta.fecha_valorizacion }}</b>)</span>
+    {% if meta.filtros %}<span>Filtros: <b>{{ meta.filtros }}</b></span>{% endif %}
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    <div class="kpi"><div class="etiqueta">SKUs contados</div><div class="valor">{{ kpi.skus_contados | unidades }}</div>
+        <div class="detalle">{{ kpi.skus_con_faltante | unidades }} con faltante · {{ kpi.skus_con_sobrante | unidades }} con sobrante</div></div>
+    <div class="kpi"><div class="etiqueta">Unidades contadas</div><div class="valor">{{ kpi.unidades_contadas | unidades }}</div></div>
+    <div class="kpi alerta"><div class="etiqueta">Diferencia</div>
+        <div class="valor {{ 'verde' if kpi.diferencia_unidades < 0 else 'rojo' }}">{{ kpi.diferencia_unidades | unidades }}</div></div>
+    <div class="kpi alerta"><div class="etiqueta">Diferencia valorizada</div>
+        <div class="valor {{ 'verde' if kpi.diferencia_valorizada < 0 else 'rojo' }}">{{ kpi.diferencia_valorizada | pesos }}</div></div>
+</div>
+{% endblock %}

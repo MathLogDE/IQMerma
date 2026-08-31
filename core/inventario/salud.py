@@ -35,10 +35,9 @@ Uso:
     )
 """
 
-import duckdb
 import pandas as pd
 
-from core.comun import conectar as _get_connection, mapa_estructura as _mapa_estructura
+from core.comun import conectar, adjuntar_rubros
 
 ESTADOS = ("quiebre", "critico", "ok", "sobrestock", "muerto")
 
@@ -65,7 +64,7 @@ def analizar_stock(
     if cobertura_min >= cobertura_max:
         raise ValueError("cobertura_min debe ser menor que cobertura_max")
 
-    conn = _get_connection(proyecto)
+    conn = conectar(proyecto)
     try:
         # --- snapshot de stock a usar ---------------------------------------
         if fecha_stock:
@@ -163,11 +162,7 @@ def analizar_stock(
 
     # --- atributos del SKU -------------------------------------------------------
     df = df.merge(df_art, on="codigo", how="left")
-    mapa = _mapa_estructura(df_est)
-    df["_clave"] = df["rubro"].astype("string").str.strip()
-    df = df.merge(mapa, on="_clave", how="left").drop(columns=["_clave"])
-    df["rubro"] = df["rubro_desc"].fillna(df["rubro"])
-    df = df.drop(columns=["rubro_desc"])
+    df = adjuntar_rubros(df, df_est)
 
     cols = [
         "codigo", "descripcion", "rubro", "marca", "super_rubro", "gran_super_rubro",

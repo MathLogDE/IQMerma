@@ -263,6 +263,19 @@ def _normalizar(df: pd.DataFrame,
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
+    # Bug del ERP: los movimientos MD (Dif. de camión) exportan el egreso en
+    # negativo. Como diferencia = ingreso - egreso, un egreso negativo se
+    # resta como si fuera un ingreso — la pata de origen del remito MD queda
+    # con signo invertido (ver core/distribucion/diferencias.py, que ya
+    # esquivaba esto calculando aparte). Se corrige acá para que quede bien
+    # en cualquier cálculo que use `diferencia` o `egreso`, no solo ahí.
+    if "tipo" in df.columns and "egreso" in df.columns:
+        es_md_negativo = (df["tipo"] == "MD") & (df["egreso"] < 0)
+        if es_md_negativo.any():
+            df.loc[es_md_negativo, "egreso"] = df.loc[es_md_negativo, "egreso"].abs()
+            print(f"  [warn] {es_md_negativo.sum()} egresos MD negativos corregidos "
+                  f"(bug de exportación del ERP, no del archivo)")
+
     # Recalcular diferencia internamente (no confiar en el ERP)
     df["diferencia"] = df["ingreso"] - df["egreso"]
 

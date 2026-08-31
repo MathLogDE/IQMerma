@@ -7,50 +7,21 @@ Tres análisis sobre `movimientos` + `tipos_categoria` + `stock_sucursal`:
   2. movimientos_outliers(): movimientos individuales de categorías de merma
                              ordenados por impacto $ — detecta ajustes anómalos
                              (ej: un CS de $363K que domina el período).
-  3. ajustes_por_usuario():  ranking de merma generada por usuario × sucursal
-                             (control de errores de operación / fraude).
+  3. ajustes_por():          ranking de merma generada por usuario o por
+                             motivo de ajuste (tipo_aj), × sucursal — control
+                             de errores de operación / fraude.
 
-Valorización: igual que core.merma — siempre desde stock_sucursal (costo o
-lista_1), snapshot elegible (default: el más reciente).
+Valorización: igual que core.merma — siempre desde stock_sucursal (costo,
+lista_1 o mixto: ventas a lista_1, resto a costo), snapshot elegible
+(default: el más reciente).
 """
 
-import duckdb
 import pandas as pd
 
-from core.comun import conectar as _get_connection, MODOS_VALORIZACION
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _valores(conn: duckdb.DuckDBPyConnection,
-             fecha_valorizacion: str | None) -> pd.DataFrame:
-    """Precio por SKU del snapshot elegido (o el más reciente)."""
-    if fecha_valorizacion:
-        fv = str(pd.to_datetime(fecha_valorizacion).date())
-        return conn.execute("""
-            SELECT codigo, costo, lista_1 FROM stock_sucursal
-            WHERE fecha_snapshot <= $fv::DATE
-            QUALIFY row_number() OVER (
-                PARTITION BY codigo
-                ORDER BY fecha_snapshot DESC, fecha_ingesta DESC, id DESC
-            ) = 1
-        """, {"fv": fv}).df()
-    return conn.execute("""
-        SELECT codigo, costo, lista_1 FROM stock_sucursal
-        QUALIFY row_number() OVER (
-            PARTITION BY codigo
-            ORDER BY fecha_snapshot DESC, fecha_ingesta DESC, id DESC
-        ) = 1
-    """).df()
-
-
-def _validar(modo: str) -> None:
-    if modo not in MODOS_VALORIZACION:
-        raise ValueError(
-            f"modo_valorizacion debe ser uno de {MODOS_VALORIZACION}, no '{modo}'"
-        )
+from core.comun import (
+    conectar, validar_modo_valorizacion, precios_snapshot,
+    MODOS_VALORIZACION_MERMA, precio_unitario_fila,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +30,7 @@ def _validar(modo: str) -> None:
 
 def evolucion_mensual(
     proyecto: str,
-    codigodepo: str | None = None,
+    codigodepo: str | list[str] | None = None,
     fecha_desde: str | None = None,
     fecha_hasta: str | None = None,
     modo_valorizacion: str = "costo",
@@ -70,19 +41,25 @@ def evolucion_mensual(
     categorías es_merma (negado, se compensan entre sí), agregado por mes;
     la venta idem con es_venta.
 
+    Args:
+        codigodepo: sucursal, lista de sucursales, o None = todas.
+
     Returns:
         DataFrame por mes: columnas $ por categoría de merma, merma_total,
         merma_unidades, venta_neta y pct. attrs: "categorias_merma".
     """
-    _validar(modo_valorizacion)
-    conn = _get_connection(proyecto)
+    validar_modo_valorizacion(modo_valorizacion, MODOS_VALORIZACION_MERMA)
+    conn = conectar(proyecto)
     try:
-        filtro_depo = "AND codigodepo = $depo" if codigodepo else ""
+        depos = None
+        if codigodepo:
+            depos = [codigodepo] if isinstance(codigodepo, str) else list(codigodepo)
+        filtro_depo = "AND codigodepo IN (SELECT unnest($depos))" if depos else ""
         filtro_desde = "AND fecha >= $desde::DATE" if fecha_desde else ""
         filtro_hasta = "AND fecha <= $hasta::DATE" if fecha_hasta else ""
         params = {}
-        if codigodepo:
-            params["depo"] = codigodepo
+        if depos:
+            params["depos"] = depos
         if fecha_desde:
             params["desde"] = str(pd.to_datetime(fecha_desde).date())
         if fecha_hasta:
@@ -106,7 +83,7 @@ def evolucion_mensual(
             GROUP BY 1, 2, 3, 4, 5
         """, params if params else []).df()
 
-        df_val = _valores(conn, fecha_valorizacion)
+        df_val = precios_snapshot(conn, fecha_valorizacion)
         cats_merma = [r[0] for r in conn.execute("""
             SELECT categoria FROM tipos_categoria WHERE es_merma
             GROUP BY categoria ORDER BY MIN(orden), categoria
@@ -119,9 +96,8 @@ def evolucion_mensual(
         vacio.attrs["categorias_merma"] = cats_merma
         return vacio
 
-    unit_col = "costo" if modo_valorizacion == "costo" else "lista_1"
-    val = df_val.set_index("codigo")[unit_col]
-    df_g["neto_valorizado"] = df_g["neto_unidades"] * df_g["codigo"].map(val)
+    df_g["neto_valorizado"] = df_g["neto_unidades"] * precio_unitario_fila(
+        df_g["codigo"], modo_valorizacion, df_val, es_venta=df_g["es_venta"])
 
     # Merma = neto (con signo) de es_merma, negado; las categorías se compensan
     # y aportan su neto negado (Inventario suma, un Ajuste positivo resta).
@@ -162,7 +138,7 @@ def movimientos_outliers(
     proyecto: str,
     fecha_desde: str,
     fecha_hasta: str,
-    codigodepo: str | None = None,
+    codigodepo: str | list[str] | None = None,
     modo_valorizacion: str = "costo",
     fecha_valorizacion: str | None = None,
     top_n: int = 50,
@@ -171,17 +147,23 @@ def movimientos_outliers(
     Movimientos individuales de categorías de merma, ordenados por impacto
     valorizado absoluto. Incluye el % que cada movimiento representa sobre
     la merma total del período (para dimensionar el outlier).
+
+    Args:
+        codigodepo: sucursal, lista de sucursales, o None = todas.
     """
-    _validar(modo_valorizacion)
-    conn = _get_connection(proyecto)
+    validar_modo_valorizacion(modo_valorizacion, MODOS_VALORIZACION_MERMA)
+    conn = conectar(proyecto)
     try:
-        filtro_depo = "AND m.codigodepo = $depo" if codigodepo else ""
+        depos = None
+        if codigodepo:
+            depos = [codigodepo] if isinstance(codigodepo, str) else list(codigodepo)
+        filtro_depo = "AND m.codigodepo IN (SELECT unnest($depos))" if depos else ""
         params = {
             "desde": str(pd.to_datetime(fecha_desde).date()),
             "hasta": str(pd.to_datetime(fecha_hasta).date()),
         }
-        if codigodepo:
-            params["depo"] = codigodepo
+        if depos:
+            params["depos"] = depos
 
         df = conn.execute(f"""
             SELECT m.fecha, m.codigodepo, d.nombre AS sucursal,
@@ -196,16 +178,17 @@ def movimientos_outliers(
               {filtro_depo}
         """, params).df()
 
-        df_val = _valores(conn, fecha_valorizacion)
+        df_val = precios_snapshot(conn, fecha_valorizacion)
     finally:
         conn.close()
 
     if df.empty:
         return df
 
-    unit_col = "costo" if modo_valorizacion == "costo" else "lista_1"
-    val = df_val.set_index("codigo")[unit_col]
-    df["valor"] = (df["unidades"] * df["codigo"].map(val).astype(float)).fillna(0.0)
+    # Sólo ve movimientos de categorías es_merma (nunca de venta): en modo
+    # "mixto" el precio resuelve siempre a costo (es_venta=None).
+    unit = precio_unitario_fila(df["codigo"], modo_valorizacion, df_val)
+    df["valor"] = (df["unidades"] * unit.astype(float)).fillna(0.0)
 
     merma_periodo = float(-df.loc[df["valor"] < 0, "valor"].sum())
     df["pct_merma_periodo"] = pd.NA
@@ -228,32 +211,51 @@ def movimientos_outliers(
 # 3. Ajustes por usuario
 # ---------------------------------------------------------------------------
 
-def ajustes_por_usuario(
+def ajustes_por(
     proyecto: str,
     fecha_desde: str,
     fecha_hasta: str,
-    codigodepo: str | None = None,
+    agrupar_por: str = "usuario",
+    codigodepo: str | list[str] | None = None,
     modo_valorizacion: str = "costo",
     fecha_valorizacion: str | None = None,
 ) -> pd.DataFrame:
     """
-    Merma generada por usuario × sucursal (movimientos de categorías es_merma).
-    Faltantes y sobrantes valorizados por separado: un usuario con mucho
-    volumen en ambos sentidos también es una señal (correcciones cruzadas).
+    Merma generada por usuario o por motivo de ajuste, × sucursal (movimientos
+    de categorías es_merma). Faltantes y sobrantes valorizados por separado:
+    mucho volumen en ambos sentidos también es una señal (correcciones
+    cruzadas).
+
+    Args:
+        agrupar_por: "usuario" (quién hizo el movimiento — control de errores
+                     de operación / fraude) o "tipo_aj" (motivo del ajuste que
+                     informa el ERP: INVENTARIO, ANULACION, RECARGA...).
+        codigodepo:  sucursal, lista de sucursales, o None = todas.
+
+    Returns:
+        DataFrame: la columna de agrupación (nombrada "usuario" o "tipo_aj"
+        según `agrupar_por`), codigodepo, sucursal, movimientos, skus,
+        faltante_valorizado, sobrante_valorizado, neto_valorizado, pct_faltante.
     """
-    _validar(modo_valorizacion)
-    conn = _get_connection(proyecto)
+    if agrupar_por not in ("usuario", "tipo_aj"):
+        raise ValueError(f"agrupar_por debe ser 'usuario' o 'tipo_aj', no '{agrupar_por}'")
+    validar_modo_valorizacion(modo_valorizacion, MODOS_VALORIZACION_MERMA)
+    conn = conectar(proyecto)
     try:
-        filtro_depo = "AND m.codigodepo = $depo" if codigodepo else ""
+        depos = None
+        if codigodepo:
+            depos = [codigodepo] if isinstance(codigodepo, str) else list(codigodepo)
+        filtro_depo = "AND m.codigodepo IN (SELECT unnest($depos))" if depos else ""
         params = {
             "desde": str(pd.to_datetime(fecha_desde).date()),
             "hasta": str(pd.to_datetime(fecha_hasta).date()),
         }
-        if codigodepo:
-            params["depo"] = codigodepo
+        if depos:
+            params["depos"] = depos
 
+        sin_dato = "(sin usuario)" if agrupar_por == "usuario" else "(sin motivo)"
         df = conn.execute(f"""
-            SELECT COALESCE(NULLIF(TRIM(m.usuario), ''), '(sin usuario)') AS usuario,
+            SELECT COALESCE(NULLIF(TRIM(m.{agrupar_por}), ''), '{sin_dato}') AS {agrupar_por},
                    m.codigodepo, d.nombre AS sucursal, t.categoria,
                    m.codigo, m.diferencia::DOUBLE AS unidades
             FROM movimientos m
@@ -263,20 +265,21 @@ def ajustes_por_usuario(
               {filtro_depo}
         """, params).df()
 
-        df_val = _valores(conn, fecha_valorizacion)
+        df_val = precios_snapshot(conn, fecha_valorizacion)
     finally:
         conn.close()
 
     if df.empty:
-        return pd.DataFrame(columns=["usuario", "codigodepo", "sucursal"])
+        return pd.DataFrame(columns=[agrupar_por, "codigodepo", "sucursal"])
 
-    unit_col = "costo" if modo_valorizacion == "costo" else "lista_1"
-    val = df_val.set_index("codigo")[unit_col]
-    df["valor"] = (df["unidades"] * df["codigo"].map(val).astype(float)).fillna(0.0)
+    # Sólo ve movimientos de categorías es_merma (nunca de venta): en modo
+    # "mixto" el precio resuelve siempre a costo (es_venta=None).
+    unit = precio_unitario_fila(df["codigo"], modo_valorizacion, df_val)
+    df["valor"] = (df["unidades"] * unit.astype(float)).fillna(0.0)
     df["faltante"] = (-df["valor"]).clip(lower=0)
     df["sobrante"] = df["valor"].clip(lower=0)
 
-    res = (df.groupby(["usuario", "codigodepo", "sucursal"], dropna=False)
+    res = (df.groupby([agrupar_por, "codigodepo", "sucursal"], dropna=False)
            .agg(
                movimientos=("codigo", "size"),
                skus=("codigo", "nunique"),

@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block estilos %}
+    @page { size: A4 landscape; margin: 10mm; }
+    body { max-width: none; }
+    table.pedido { font-size: 8pt; table-layout: fixed; }
+    table.pedido th, table.pedido td { padding: 3px 6px; overflow-wrap: break-word; }
+    td.manual { border-left: 1.5px solid var(--tinta); }
+
+    /* La tabla es la única sección de este reporte y suele ser larga: si
+       hereda el break-inside:avoid de .seccion (base.html, @media print),
+       el navegador manda TODA la sección a la página siguiente en vez de
+       partirla, dejando la primera hoja casi en blanco. Acá se permite
+       partir la sección, pero no una fila a la mitad, y se repite el
+       encabezado de la tabla en cada página impresa. */
+    @media print {
+        .seccion { break-inside: auto; }
+        table.pedido thead { display: table-header-group; }
+        table.pedido tr { break-inside: avoid; }
+    }
+{% endblock %}
+
+{% block metadatos %}
+    <span>Sucursal: <b>{{ meta.sucursal }}</b></span>
+    <span>Venta ajustada calculada sobre: <b>{{ meta.desde }} → {{ meta.hasta }}</b></span>
+    <span>Cobertura del pedido: <b>{{ meta.dias_cobertura }} días</b></span>
+    <span>Stock anclado al: <b>{{ meta.fecha_stock }}</b></span>
+    {% if meta.recorte %}<span>Recorte: <b>{{ meta.recorte }}</b></span>{% endif %}
+{% endblock %}
+
+{% block cuerpo %}
+{% if not filas %}
+<div class="seccion"><p style="color:var(--gris)">
+    Ningún SKU del recorte filtrado tiene datos para esta sucursal.</p></div>
+{% endif %}
+
+{% if filas %}
+<div class="seccion">
+    <table class="pedido">
+        <colgroup>
+            <col style="width:5%">   <!-- Código -->
+            <col style="width:18%">  <!-- Descripción -->
+            <col style="width:7%">   <!-- Rubro -->
+            <col style="width:7%">   <!-- Marca -->
+            <col style="width:7%">   <!-- EAN -->
+            <col style="width:4%">   <!-- UxB -->
+            <col style="width:5%">   <!-- VPR -->
+            <col style="width:5%">   <!-- D/STOCK -->
+            <col style="width:5%">   <!-- d/s-stock -->
+            <col style="width:5%">   <!-- S SUC -->
+            <col style="width:5%">   <!-- S CD -->
+            <col style="width:6%">   <!-- Últ. remito -->
+            <col style="width:6%">   <!-- Últ. venta -->
+            <col style="width:6%">   <!-- Ped. -->
+            <col style="width:9%">   <!-- Cantidad a pedir -->
+        </colgroup>
+        <thead><tr>
+            <th>Código</th><th>Descripción</th><th>Rubro</th><th>Marca</th><th>EAN</th>
+            <th class="num">UxB</th>
+            <th class="num">VPR</th>
+            <th class="num">D/STOCK</th>
+            <th class="num">d/s-stock</th>
+            <th class="num">S SUC</th>
+            <th class="num">S CD</th>
+            <th>Últ. remito</th><th>Últ. venta</th>
+            <th class="num">Ped. ({{ meta.dias_cobertura }} d)</th>
+            <th class="manual">Cantidad a pedir</th>
+        </tr></thead>
+        <tbody>
+        {% for f in filas %}
+        <tr>
+            <td>{{ f.codigo }}</td>
+            <td>{{ f.descripcion }}</td>
+            <td>{{ f.rubro }}</td>
+            <td>{{ f.marca }}</td>
+            <td>{{ f.ean }}</td>
+            <td class="num">{{ f.uxb }}</td>
+            <td class="num">{{ f.venta_ajustada }}</td>
+            <td class="num">{{ f.dias_con_stock }}</td>
+            <td class="num">{{ f.dias_quiebre }}</td>
+            <td class="num">{{ f.stock_sucursal }}</td>
+            <td class="num">{{ f.stock_cd_001 }}</td>
+            <td>{{ f.ultimo_remito }}</td>
+            <td>{{ f.ultima_venta }}</td>
+            <td class="num">{{ f.pedido }}</td>
+            <td class="manual"></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

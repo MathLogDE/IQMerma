@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Período: <b>{{ meta.desde }} → {{ meta.hasta }}</b></span>
+    {% if meta.valorizacion %}<span>Precios constantes: <b>{{ meta.valorizacion }}</b></span>{% endif %}
+    {% if meta.sucursales_filtro %}<span>Sucursales: <b>{{ meta.sucursales_filtro }}</b></span>{% endif %}
+    {% if meta.recorte %}<span>Recorte: <b>{{ meta.recorte }}</b></span>{% endif %}
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    <div class="kpi"><div class="etiqueta">Sucursales</div>
+        <div class="valor">{{ kpi.sucursales }}</div></div>
+    <div class="kpi"><div class="etiqueta">Transformaciones</div>
+        <div class="valor">{{ kpi.comprobantes }}</div></div>
+    <div class="kpi alerta"><div class="etiqueta">Dado de baja</div>
+        <div class="valor">{{ kpi.valor_baja | pesos }}</div></div>
+    <div class="kpi"><div class="etiqueta">Alta (liquidación)</div>
+        <div class="valor">{{ kpi.valor_alta | pesos }}</div></div>
+    <div class="kpi"><div class="etiqueta">Neto</div>
+        <div class="valor">{{ kpi.neto_valor | pesos }}</div></div>
+</div>
+<p style="font-size:8.5pt;color:var(--gris);margin-top:-8px">
+    "Dado de baja" ({{ kpi.unidades_baja | unidades }} u.) es el SKU original que sale de la
+    transformación; "Alta (liquidación)" ({{ kpi.unidades_alta | unidades }} u.) es el SKU que
+    lo reemplaza.
+</p>
+
+{% if por_sucursal %}
+<div class="seccion">
+    <h2>Por sucursal</h2>
+    {% if graf_sucursal %}
+    <div class="grafico">
+        <div class="pie-grafico">Valor dado de baja por sucursal.</div>
+        {{ graf_sucursal | safe }}
+    </div>
+    {% endif %}
+    <table>
+        <thead><tr>
+            <th>Sucursal</th>
+            <th class="num" colspan="2">Dado de baja $</th>
+            <th class="num">Dado de baja u.</th>
+            <th class="num">Alta $</th>
+            <th class="num">Alta u.</th>
+        </tr></thead>
+        <tbody>
+        {% for f in por_sucursal %}
+        <tr>
+            <td>{{ f.sucursal }}</td>
+            <td class="num">{{ f.valor_baja }}</td>
+            <td class="barra-celda" style="min-width:70px">
+                <div class="barra" style="width:{{ f.valor_baja_w }}%"></div></td>
+            <td class="num">{{ f.unidades_baja }}</td>
+            <td class="num">{{ f.valor_alta }}</td>
+            <td class="num">{{ f.unidades_alta }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if top_baja %}
+<div class="seccion">
+    <h2>Top SKUs dados de baja</h2>
+    {% if graf_baja %}
+    <div class="grafico">
+        <div class="pie-grafico">Valor dado de baja por SKU.</div>
+        {{ graf_baja | safe }}
+    </div>
+    {% endif %}
+    <table>
+        <thead><tr>
+            <th>Código</th><th>Descripción</th>
+            <th class="num">Unidades</th><th class="num">Valor</th>
+        </tr></thead>
+        <tbody>
+        {% for f in top_baja %}
+        <tr>
+            <td>{{ f.codigo }}</td><td>{{ f.descripcion }}</td>
+            <td class="num">{{ f.unidades }}</td><td class="num">{{ f.valor }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if top_alta %}
+<div class="seccion">
+    <h2>Top SKUs de liquidación (alta)</h2>
+    {% if graf_alta %}
+    <div class="grafico">
+        <div class="pie-grafico">Valor de alta por SKU.</div>
+        {{ graf_alta | safe }}
+    </div>
+    {% endif %}
+    <table>
+        <thead><tr>
+            <th>Código</th><th>Descripción</th>
+            <th class="num">Unidades</th><th class="num">Valor</th>
+        </tr></thead>
+        <tbody>
+        {% for f in top_alta %}
+        <tr>
+            <td>{{ f.codigo }}</td><td>{{ f.descripcion }}</td>
+            <td class="num">{{ f.unidades }}</td><td class="num">{{ f.valor }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if pares %}
+<div class="seccion">
+    <h2>Detalle de transformaciones
+        <span style="font-weight:400;color:var(--gris);font-size:9pt">
+            (SKU dado de baja → SKU de liquidación, por comprobante)</span></h2>
+    <table>
+        <thead><tr>
+            <th>Comprobante</th><th>Sucursal</th><th>Fecha</th>
+            <th>SKU(s) baja</th><th>SKU(s) alta</th>
+            <th class="num">Valor baja</th><th class="num">Valor alta</th><th class="num">Neto</th>
+        </tr></thead>
+        <tbody>
+        {% for f in pares %}
+        <tr>
+            <td>{{ f.numero }}</td><td>{{ f.sucursal }}</td><td>{{ f.fecha }}</td>
+            <td>{{ f.skus_baja }}</td><td>{{ f.skus_alta }}</td>
+            <td class="num">{{ f.valor_baja }}</td><td class="num">{{ f.valor_alta }}</td>
+            <td class="num">{{ f.neto_valor }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}
