@@ -1,0 +1,2 @@
+cd C:\Proyectos\IQMerma
+python -m streamlit run ui/app.py

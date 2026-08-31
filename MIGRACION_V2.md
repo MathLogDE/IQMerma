@@ -22,7 +22,7 @@ anclarse en un "evento de conteo".
    Catálogo definitivo (merma = pérdida no explicada):
    - Ventas (no merma) = FA, FB, NCA, NCB, FCA, NCCA
    - Inventario (**merma**) = INV
-   - Dif. de camión (**merma**) = MD
+   - Dif. de camión (informativa; hasta jul-2026 contaba como merma) = MD
    - Ajustes (**merma**) = CS
    - Remitido (no merma) = RE, RI, RDC
    - Subtipos sin mapear → "(sin categoría)", no suman a merma.

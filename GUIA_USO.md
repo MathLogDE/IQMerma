@@ -42,24 +42,35 @@ correr de nuevo sin romper datos.
 ## 3. Correr la app
 
 ```bash
-streamlit run ui/app.py
+python -m streamlit run ui/app.py
 ```
 
-Abre la interfaz en el navegador. En la **barra lateral** elegís el proyecto y
-navegás entre las páginas. Si todavía no hay proyectos, la app te avisa cómo
-crear uno.
+(o doble clic en **`iniciar.bat`**). Abre la interfaz en el navegador. En la
+**barra lateral** elegís el proyecto y navegás entre las páginas. Si todavía
+no hay proyectos, la app te avisa cómo crear uno.
+
+> ⚠️ Usá `python -m streamlit`, **no** `streamlit run ...`: en máquinas con
+> Device Guard / Smart App Control, el `streamlit.exe` de AppData está
+> bloqueado por ser un ejecutable sin firma; `python.exe` (Program Files) sí
+> está permitido y carga streamlit como módulo.
+
+> ⚠️ No corras la app **mientras hay una ingesta en curso**: DuckDB bloquea
+> la base en exclusivo durante la escritura y la app no puede abrirla
+> ("Conflicting lock is held..."). Al terminar la carga se libera solo.
 
 ## 4. La interfaz de un vistazo
 
-**Barra lateral:** selector de **proyecto** + navegación entre 5 páginas.
+**Barra lateral:** selector de **proyecto** + navegación por **secciones**
+(elegís la sección y después la página):
 
-| Página | Para qué |
+| Sección | Páginas |
 |---|---|
-| **Inicio** | Métricas rápidas del proyecto y rango de fechas disponible. |
-| **Ingesta** | Ver qué períodos hay cargados y subir archivos nuevos. |
-| **Análisis** | Merma por SKU para una sucursal y un rango de fechas. |
-| **Sucursales** | Merma agregada, comparando todas las sucursales. |
-| **Rubros** | Pareto de merma por rubro (usa lo calculado en Análisis). |
+| **General** | Inicio · Ingesta |
+| **Merma** | Análisis (con pestañas Detalle · Comparativa por sucursal · Pareto por rubro) · Control de merma |
+| **Inventario** | Salud de stock · Min / Opt / Max |
+| **Distribución** | Transferencias |
+| **Comercial** | Márgenes |
+| **Forecasting** | Forecast |
 
 ## 5. Cargar datos
 
@@ -199,20 +210,168 @@ actualizan con el filtro.
   stock, negativo = salió).
 - **Dashboard:** composición de la merma por categoría (dona), top 15 SKUs por
   merma (barras apiladas) y merma vs % de merma por gran super rubro.
+- **Comparativa por sucursal** (solo con "Todas"): tabla por sucursal (merma por
+  categoría en $ y unidades, venta, %) + gráfico apilado con la línea de %.
+  Respeta los filtros aplicados.
+- **Exportar:** botones **⬇ Excel** / **⬇ CSV** debajo del detalle y de la
+  comparativa (descargan el listado con los filtros aplicados), y
+  **🖨 Reporte imprimible**: un HTML autocontenido con KPIs, composición,
+  comparativa, merma por rubro y top SKUs — se abre en el navegador y se
+  imprime o guarda como PDF con Ctrl+P.
 
 > El **universo de SKUs** son los que tuvieron algún movimiento en el rango.
 
-### Página Sucursales
+### Página Control de merma
 
-Mismo rango y valorización, pero calcula **todas las sucursales** y las compara:
-métricas globales, una tabla con la merma por categoría de cada sucursal, y un
-gráfico comparativo. Útil para detectar qué locales concentran la merma.
+Auditoría de la merma en tres vistas (mismos controles de período y
+valorización):
 
-### Página Rubros
+- **Evolución mensual**: merma apilada por categoría + línea de % sobre venta,
+  mes a mes, con la variación del último mes. Detecta tendencias.
+- **Outliers**: los movimientos individuales de mayor impacto $ del período,
+  con usuario, comprobante y % que representan de la merma bruta. Pares de
+  igual magnitud y signo opuesto suelen ser anulaciones/correcciones.
+- **Merma por usuario**: faltantes y sobrantes valorizados por usuario ×
+  sucursal. Mucho volumen en ambos sentidos = correcciones cruzadas.
 
-Pareto de merma por **rubro** (o super rubro / gran super rubro). Usa lo que
-calculaste en **Análisis**, así que primero corré esa página. Muestra las barras
-de merma por rubro ordenadas y la curva de **% acumulado** (regla 80/20).
+Todo descargable en Excel/CSV.
+
+### Reportes imprimibles con la marca del cliente
+
+Cada página de análisis (Análisis, Control de merma, Salud de stock,
+Min/Opt/Max y Forecast) tiene su botón **🖨 Descargar reporte**: un HTML
+autocontenido A4 que se abre en el navegador y se imprime o guarda como PDF
+con Ctrl+P.
+
+En **Ingesta → 🎨 Cliente** se configura la marca que llevan todos los
+reportes: **logo** (PNG/JPG, embebido en el HTML), nombre del cliente, datos
+(razón social, CUIT, contacto — una línea por dato), **color de acento** y pie
+de página. Se guarda en `projects/<proyecto>/` (junto a su base, fuera de
+git), así cada cliente tiene su propia identidad.
+
+### Ingesta → ⚙ Depósitos
+
+Editor para marcar los **centros de logística** (`es_logistica`) desde la UI.
+Los CD se excluyen por defecto de la comparativa por sucursal (checkbox
+"Excluir depósitos logísticos") y del análisis de salud de stock — no venden,
+distorsionan el % de merma.
+
+### Página Salud de stock
+
+Cruza el stock (snapshot elegible) con la demanda reciente (ventana de 30 a
+180 días) y clasifica cada SKU × sucursal:
+
+| Estado | Significado |
+|---|---|
+| 🔴 Quiebre | Stock 0 con demanda → muestra la **venta perdida estimada $/día** |
+| 🟠 Crítico | Cobertura por debajo del mínimo de la banda |
+| 🟢 OK | Cobertura dentro de la banda saludable |
+| 🔵 Sobrestock | Cobertura por encima del máximo → capital inmovilizado |
+| ⚫ Muerto | Stock sin ventas en la ventana → liquidar / redistribuir |
+
+La **banda de cobertura** (mín/máx en días) es ajustable. Los depósitos
+marcados `es_logistica` se excluyen por defecto (los CD no venden). Filtros
+por estado / gran super rubro / búsqueda, descarga Excel/CSV y gráficos:
+conteo y capital por estado, top quiebres por venta perdida y stock muerto
+por rubro.
+
+### Página Serie de stock
+
+Reconstruye el stock **día a día** por SKU: parte del snapshot conocido y
+camina los movimientos (ventas restan, remitos suman, ajustes según signo).
+Sirve para ver **cuándo hubo quiebre** y tramos de stock muy bajo o alto.
+
+- Elegís sucursal, rango y el **snapshot de anclaje**.
+- **KPIs**: SKUs con quiebre, días promedio en quiebre, racha más larga.
+- **Gráfico agregado**: cuántos SKUs estuvieron sin stock cada día.
+- **Tabla por SKU**: días en quiebre, % del período, racha máxima, stock
+  mín/prom/máx, con descarga Excel/CSV.
+- **Detalle**: elegís un SKU y ves su curva diaria con los tramos de quiebre
+  sombreados en rojo, más la lista de movimientos que la explican.
+
+> El método se validó contra dos snapshots reales: reconstruye el stock con
+> **99% de exactitud** a 6 días. Sobre rangos largos puede acumular desvío —
+> los SKUs cuya reconstrucción cae por debajo de 0 se avisan como
+> incoherencia (movimientos y snapshot que no reconcilian).
+
+### Página Min / Opt / Max
+
+Políticas de inventario por SKU × sucursal (revisión periódica, order-up-to):
+
+- **Ciclo de reposición estimado de los datos**: mediana de días entre
+  llegadas (Remitido entrante), con fallback SKU global → rubro → default.
+- **Clase ABC** dinámica (participación en la venta valorizada, 80/95 por
+  sucursal) → nivel de servicio A 95% · B 90% · C 80%; **clase XYZ** por
+  regularidad de la demanda (CV semanal).
+- **Bandas**: seguridad = z·σd·√(lead+ciclo); Mín = demanda·lead + seguridad;
+  Ópt = demanda·(lead+ciclo) + seguridad; Máx = Ópt + seguridad.
+- **Estados**: 🔴 Reponer (con compra sugerida hasta el óptimo, redondeada a
+  bultos cuando el bulto cabe en el óptimo) · 🟢 OK · 🔵 Exceso · ⚫ Sin demanda.
+- Parámetros ajustables: lead time y ciclo default. KPIs, matriz ABC×XYZ,
+  top compras sugeridas y descarga Excel/CSV.
+
+### Página Transferencias
+
+Sugerencias de **redistribución lateral** entre sucursales: SKUs en exceso en
+una sucursal que otra necesita reponer. Reglas: el donante nunca baja de su
+nivel óptimo; los receptores clase A tienen prioridad; los depósitos
+logísticos quedan fuera (CD→sucursal es la reposición normal). Muestra KPIs
+(unidades y valor a costo que se reponen **sin comprar**), tabla filtrable,
+matriz origen×destino y un **reporte imprimible operativo** por ruta (lista
+de picking con columna ✓).
+
+### Página Márgenes
+
+Margen teórico (lista vs costo) y margen bruto del período por SKU / gran
+super rubro, con el KPI **merma como % del margen** (cuánto de lo que el
+producto deja se pierde en merma). Incluye la sección **evolución de costos**
+(inflación de reposición por rubro), que se activa cuando hay ≥ 2 snapshots
+de stock cargados — otro motivo para cargar stock con cadencia semanal.
+
+### Página Forecast
+
+Proyección mensual de unidades por nivel de agregación (total / gran super
+rubro / rubro / sucursal — a nivel SKU la demanda es errática y un forecast
+puntual sería ruido). **Métrica elegible**:
+
+- **Ventas** (salida es_venta, valorizada a precio de lista), o
+- **Transferencias recibidas** (Remitido entrante, valorizado a costo) — para
+  planificar el abastecimiento. Con "Superponer" se dibuja la serie real de
+  la otra métrica: si las transferencias caen antes que las ventas, la caída
+  es de **abastecimiento**; si las ventas caen con transferencias normales,
+  es de **demanda**.
+
+> Nota: a nivel "Total", las transferencias recibidas suman los dos
+> escalones (proveedor→CD y CD→sucursal); por sucursal la lectura es directa.
+
+Características del modelo:
+
+- Modelo transparente: índices estacionales + tendencia robusta (Theil-Sen)
+  **amortiguada** — una caída reciente no se extrapola al infinito.
+- Los **meses atípicos** (lotes mayoristas, anulaciones masivas) se detectan
+  por MAD, no dominan el ajuste y se marcan con ✕ en el gráfico.
+- El **MAPE de backtest** (re-predecir los últimos 3 meses reales) se muestra
+  como medida honesta del error esperado. Banda de confianza ~95%.
+- El valor $ se deriva de las unidades × precio de lista actual promedio.
+- Requiere ≥ 12 meses de historia por grupo (ideal 24 para estacionalidad).
+
+### Análisis → pestaña Comparativa por sucursal
+
+Con **⊕ Todas las sucursales** elegido, esta pestaña compara todas las
+sucursales en una sola pasada: tabla por sucursal (merma por categoría en $ y
+unidades, venta, %), gráfico apilado con línea de % y descarga Excel/CSV.
+Respeta los filtros aplicados. Útil para detectar qué locales concentran la
+merma.
+
+> Ojo: los **centros de distribución** aparecen con venta baja o negativa (no
+> venden; reciben). Por defecto se excluyen con el checkbox "Excluir depósitos
+> logísticos".
+
+### Análisis → pestaña Pareto por rubro
+
+Pareto de merma por **rubro** (o super rubro / gran super rubro) sobre el
+resultado ya calculado y filtrado: barras de merma ordenadas y curva de
+**% acumulado** (regla 80/20).
 
 ## 7. Cómo se calcula la merma
 
@@ -220,13 +379,18 @@ de merma por rubro ordenadas y la curva de **% acumulado** (regla 80/20).
 `diferencia` (neta) de los movimientos del rango, y se valoriza contra el
 **stock** (snapshot más reciente ≤ fecha hasta).
 
-- **Categorías de merma** (`es_merma`, suman al numerador): **Inventario (INV)**,
-  **Dif. de camión (MD)** y **Ajustes (CS)** — solo su **parte negativa**
-  (faltante).
+- **Categorías de merma** (`es_merma`, suman al numerador): **Inventario (INV)**
+  y **Ajustes (CS)**. La merma de un SKU es el **neto con signo** de estas
+  categorías, negado (un faltante suma; un ajuste positivo resta) — así se
+  **compensan dentro del mismo código** (ej: un egreso de INV y un ingreso de
+  CS del mismo SKU se cancelan). Al totalizar, los netos se anulan; un SKU
+  puede quedar con merma negativa (sobrante neto). En las tablas se ven las
+  columnas Inventario y Ajustes por separado.
 - **Categoría de venta** (`es_venta`, denominador): **Ventas**
   (FA/FB/NCA/NCB/FCA/NCCA). La venta del período = unidades netas vendidas
   (la salida) valorizadas desde el stock. Las devoluciones (NCA/NCB) descuentan.
-- **No son ni merma ni venta**: **Remitido** (RE/RI/RDC) — flujos legítimos.
+- **No son ni merma ni venta**: **Remitido** (RE/RI/RDC) y **Dif. de camión
+  (MD)** — se muestran como columnas informativas (neto con signo).
 - **Valorización — siempre desde el stock**:
   - *A costo* → unidades × `costo` del stock.
   - *A precio de lista* → unidades × `lista_1` del stock.
@@ -283,4 +447,8 @@ conn.close()
 | Un SKU sin `% Merma` | No tiene ventas en el rango (denominador 0). |
 | Columna **"(sin categoría)"** con valores | Hay subtipos de movimiento que no están en `tipos_categoria`. Agregalos al catálogo. |
 | Merma valorizada en 0 pese a haber faltantes | El SKU no tiene snapshot de stock ≤ fecha hasta → no se puede valorizar. Cargá un stock que cubra el período. |
-| La página Rubros dice "Calculá primero el análisis" | Corré **Análisis** antes; Rubros reutiliza ese resultado. |
+| La comparativa por sucursal pide elegir "Todas" | En Análisis, seleccioná **⊕ Todas las sucursales** y recalculá; esa pestaña compara entre locales. |
+| Un mes aparece "desparramado" en otros meses, o faltan días > 12 | Fechas con swap día/mes (Excel en locale US convierte `3/11` en 11-mar). La ingesta lo corrige usando el nombre de la pestaña (`11-25` → nov-2025) y avisa cuántas corrigió — pero los datos cargados **antes** del fix hay que recargarlos. |
+| "[ALERTA] Solo X% de las filas caen en el mes principal" al ingestar | El archivo mezcla meses o el formato de fecha no se pudo resolver. Revisar el Excel de origen. |
+| "streamlit.exe ha sido bloqueado por la directiva de Device Guard" | Usá `python -m streamlit run ui/app.py` (o `iniciar.bat`): evita el .exe sin firma de AppData. |
+| "Conflicting lock is held" al abrir la app | Hay una ingesta escribiendo la base. Esperá a que termine (o no ingestes con la app abierta). |

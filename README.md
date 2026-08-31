@@ -17,24 +17,31 @@ Analizador de merma de inventario para retail. Reemplaza el flujo Excel/Power Pi
 
 ```
 mermaiq/
-├── core/
-│   └── merma.py        # Motor de cálculo de merma (sin dependencias de UI)
-├── ui/
-│   └── app.py          # Interfaz Streamlit
-├── ingesta/            # Carga de archivos del ERP
-│   ├── movimientos.py  #   movimientos: ventas (VTA), inventario (INV), remitos, ajustes
-│   ├── stock.py        #   snapshots de stock (valorización)
-│   └── referencias.py  #   depósitos, estructura, artículos
-├── projects/           # Un .duckdb por cliente (excluido de git)
-├── exports/            # Temporales de ingesta en runtime (excluido de git)
-├── setup_db.py         # Schema + catálogo tipos_categoria
-├── requirements.txt
-├── README.md
-├── GUIA_USO.md         # Guía de uso completa
-└── MIGRACION_V2.md     # Notas del refactor v2
+├── core/                       # Motores de análisis (sin dependencias de UI)
+│   ├── comun.py                #   conexión, valorización, jerarquía, catálogos
+│   ├── merma/                  #   analisis.py · control.py
+│   ├── inventario/             #   salud.py · politicas.py
+│   ├── distribucion/           #   transferencias.py
+│   ├── comercial/              #   margenes.py
+│   ├── forecasting/            #   demanda.py
+│   └── reporte.py              #   reportes imprimibles con marca (transversal)
+├── ui/                         # Interfaz Streamlit
+│   ├── app.py                  #   router: config, CSS, navegación por secciones
+│   ├── comun.py                #   helpers de UI + fachada de core
+│   └── paginas/                #   una página por archivo (función render)
+├── ingesta/                    # Carga de archivos del ERP
+│   ├── movimientos.py          #   ventas (VTA), inventario (INV), remitos, ajustes
+│   ├── stock.py                #   snapshots de stock (valorización)
+│   └── referencias.py          #   depósitos, estructura, artículos
+├── templates/                  # HTML (Jinja2) de los reportes imprimibles
+├── projects/                   # Un .duckdb por cliente (excluido de git)
+├── setup_db.py                 # Schema + catálogo tipos_categoria
+├── README.md · GUIA_USO.md · MIGRACION_V2.md
+└── requirements.txt · iniciar.bat
 ```
 
-> Directorios reservados sin uso actual: `config/`, `templates/`, `tests/`.
+Dominios: **merma · inventario · distribución · comercial · forecasting**.
+Cada uno tiene su motor en `core/<dominio>/` y su(s) página(s) en `ui/paginas/`.
 
 ## Setup inicial
 
@@ -46,7 +53,7 @@ pip install -r requirements.txt
 python setup_db.py --project nombre_cliente
 
 # Correr la app
-streamlit run ui/app.py
+python -m streamlit run ui/app.py
 ```
 
 ## Guía de uso

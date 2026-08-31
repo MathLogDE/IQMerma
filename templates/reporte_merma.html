@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Alcance: <b>{{ meta.sucursal }}</b></span>
+    <span>Período: <b>{{ meta.fecha_desde }} → {{ meta.fecha_hasta }}</b></span>
+    {% if meta.fecha_corte_moda %}<span>Corte más frecuente: <b>{{ meta.fecha_corte_moda }}</b></span>{% endif %}
+    <span>Valorización: <b>{{ meta.modo }}</b> (stock del <b>{{ meta.fecha_valorizacion }}</b>)</span>
+    {% if meta.filtros %}<span>Filtros: <b>{{ meta.filtros }}</b></span>{% endif %}
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    <div class="kpi"><div class="etiqueta">SKUs analizados</div><div class="valor">{{ kpi.skus | unidades }}</div>
+        <div class="detalle">{{ kpi.skus_con_merma | unidades }} con merma</div></div>
+    <div class="kpi alerta"><div class="etiqueta">Merma total</div><div class="valor">{{ kpi.merma | pesos }}</div>
+        <div class="detalle">{{ kpi.merma_u | unidades }} unidades</div></div>
+    <div class="kpi"><div class="etiqueta">Venta del período</div><div class="valor">{{ kpi.venta | pesos }}</div>
+        <div class="detalle">{{ kpi.venta_u | unidades }} unidades</div></div>
+    <div class="kpi alerta"><div class="etiqueta">% Merma s/ventas</div><div class="valor">{{ kpi.pct | pct }}</div></div>
+    {% if kpi.pct_skus_contados is not none %}
+    <div class="kpi"><div class="etiqueta">% SKUs contados</div><div class="valor">{{ kpi.pct_skus_contados | pct }}</div>
+        <div class="detalle">{{ kpi.skus_inv | unidades }} de {{ kpi.skus_total | unidades }} SKUs</div></div>
+    {% endif %}
+</div>
+
+{% if composicion %}
+<div class="seccion">
+    <h2>Composición de la merma por categoría</h2>
+    <table>
+        <thead><tr><th>Categoría</th>
+            {% if vista in ('valorizado','ambos') %}<th class="num">Merma $</th>{% endif %}
+            {% if vista in ('unidades','ambos') %}<th class="num">Unidades</th>{% endif %}
+            <th class="num">% del total</th><th class="barra-celda"></th></tr></thead>
+        <tbody>
+        {% for c in composicion %}
+        <tr>
+            <td>{{ c.nombre }}</td>
+            {% if vista in ('valorizado','ambos') %}<td class="num {{ 'verde' if c.neg else 'rojo' }}">{{ c.valor | pesos }}</td>{% endif %}
+            {% if vista in ('unidades','ambos') %}<td class="num">{{ c.unidades | unidades }}</td>{% endif %}
+            <td class="num">{{ c.share | pct }}</td>
+            <td class="barra-celda"><div class="barra {{ 'verde' if c.neg else '' }}" style="width: {{ c.share_w }}%"></div></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if sucursales %}
+<div class="seccion">
+    <h2>Comparativa por sucursal</h2>
+    <table>
+        <thead><tr><th>Sucursal</th><th class="num">SKUs c/merma</th><th class="num">% SKUs contados</th>
+            {% if vista in ('valorizado','ambos') %}<th class="num">Merma $</th>{% endif %}
+            {% if vista in ('unidades','ambos') %}<th class="num">Merma u.</th>{% endif %}
+            {% if vista in ('valorizado','ambos') %}<th class="num">Venta $</th>{% endif %}
+            <th class="num">% Merma</th>{% if es_dinamico %}<th class="num">Días prom. de corte</th>{% endif %}
+            <th class="barra-celda"></th></tr></thead>
+        <tbody>
+        {% for s in sucursales %}
+        <tr>
+            <td>{{ s.nombre }}</td>
+            <td class="num">{{ s.skus_con_merma | unidades }}</td>
+            <td class="num">{{ s.pct_skus_contados | pct }}</td>
+            {% if vista in ('valorizado','ambos') %}<td class="num {{ 'verde' if s.neg else 'rojo' }}">{{ s.merma | pesos }}</td>{% endif %}
+            {% if vista in ('unidades','ambos') %}<td class="num">{{ s.merma_u | unidades }}</td>{% endif %}
+            {% if vista in ('valorizado','ambos') %}<td class="num">{{ s.venta | pesos }}</td>{% endif %}
+            <td class="num">{{ s.pct | pct }}</td>
+            {% if es_dinamico %}<td class="num">{{ s.dias_promedio | dias }}</td>{% endif %}
+            <td class="barra-celda"><div class="barra {{ 'verde' if s.neg else '' }}" style="width: {{ s.merma_w }}%"></div></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr><td>Total</td><td class="num">{{ suc_total.skus_con_merma | unidades }}</td>
+            <td class="num">{{ suc_total.pct_skus_contados | pct }}</td>
+            {% if vista in ('valorizado','ambos') %}<td class="num {{ 'verde' if suc_total.neg else 'rojo' }}">{{ suc_total.merma | pesos }}</td>{% endif %}
+            {% if vista in ('unidades','ambos') %}<td class="num">{{ suc_total.merma_u | unidades }}</td>{% endif %}
+            {% if vista in ('valorizado','ambos') %}<td class="num">{{ suc_total.venta | pesos }}</td>{% endif %}
+            <td class="num">{{ suc_total.pct | pct }}</td>
+            {% if es_dinamico %}<td class="num">{{ suc_total.dias_promedio | dias }}</td>{% endif %}
+            <td></td></tr></tfoot>
+    </table>
+</div>
+{% endif %}
+
+{% if rubros %}
+<div class="seccion">
+    <h2>Merma por {{ nivel_rubro }}</h2>
+    <table>
+        <thead><tr><th>{{ nivel_rubro | title }}</th>
+            {% if vista in ('valorizado','ambos') %}<th class="num">Merma $</th>{% endif %}
+            {% if vista in ('unidades','ambos') %}<th class="num">Merma u.</th>{% endif %}
+            {% if vista in ('valorizado','ambos') %}<th class="num">Venta $</th>{% endif %}
+            <th class="num">% Merma</th><th class="num">% SKUs contados</th><th class="num">% del total</th>
+            <th class="barra-celda"></th></tr></thead>
+        <tbody>
+        {% for r in rubros %}
+        <tr>
+            <td>{{ r.nombre }}</td>
+            {% if vista in ('valorizado','ambos') %}<td class="num {{ 'verde' if r.neg else 'rojo' }}">{{ r.merma | pesos }}</td>{% endif %}
+            {% if vista in ('unidades','ambos') %}<td class="num">{{ r.merma_u | unidades }}</td>{% endif %}
+            {% if vista in ('valorizado','ambos') %}<td class="num">{{ r.venta | pesos }}</td>{% endif %}
+            <td class="num">{{ r.pct | pct }}</td>
+            <td class="num">{{ r.pct_skus_contados | pct }}</td>
+            <td class="num">{{ r.share | pct }}</td>
+            <td class="barra-celda"><div class="barra {{ 'verde' if r.neg else '' }}" style="width: {{ r.share_w }}%"></div></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if top_skus %}
+<div class="seccion">
+    <h2>Top {{ top_skus | length }} SKUs por merma</h2>
+    <table>
+        <thead><tr><th>Código</th><th>Descripción</th><th>Rubro</th>
+            {% if vista in ('valorizado','ambos') %}<th class="num">Merma $</th>{% endif %}
+            {% if vista in ('unidades','ambos') %}<th class="num">Merma u.</th>{% endif %}
+            {% if vista in ('valorizado','ambos') %}<th class="num">Venta $</th>{% endif %}
+            <th class="num">% Merma</th></tr></thead>
+        <tbody>
+        {% for s in top_skus %}
+        <tr>
+            <td>{{ s.codigo }}</td>
+            <td>{{ s.descripcion }}</td>
+            <td>{{ s.rubro }}</td>
+            {% if vista in ('valorizado','ambos') %}<td class="num {{ 'verde' if s.neg else 'rojo' }}">{{ s.merma | pesos }}</td>{% endif %}
+            {% if vista in ('unidades','ambos') %}<td class="num">{{ s.merma_u | unidades }}</td>{% endif %}
+            {% if vista in ('valorizado','ambos') %}<td class="num">{{ s.venta | pesos }}</td>{% endif %}
+            <td class="num">{{ s.pct | pct }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}
