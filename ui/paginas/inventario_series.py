@@ -21,18 +21,31 @@ def _rachas_quiebre(d: pd.DataFrame) -> list[tuple]:
     return tramos
 
 
-def _marcas(fig, serie, codigos, tipos, mostrar_nombre=True) -> None:
-    """Dibuja una X sobre la curva cada día con remito / ajuste."""
+def _marcas(fig, serie, codigos, tipos, mostrar_nombre=True,
+            mostrar_etiquetas=False) -> None:
+    """Dibuja una X sobre la curva cada día con remito / ajuste.
+
+    Con mostrar_etiquetas=True, además deja fecha + variación escritas al
+    lado de cada marca (mismo dato que el hover, pero permanente).
+    """
     marcas = marcadores_movimiento(serie, codigos, tipos)
     for tipo, cfg in TIPOS_MARCA.items():
         m = marcas[marcas["tipomov"] == tipo]
         if m.empty:
             continue
+        texto = None
+        if mostrar_etiquetas:
+            texto = (m["fecha"].dt.strftime("%d/%m")
+                     + "<br>" + m["delta"].apply(lambda v: f"{v:+,.0f}"))
         fig.add_scatter(
-            x=m["fecha"], y=m["stock"], mode="markers",
+            x=m["fecha"], y=m["stock"],
+            mode="markers+text" if mostrar_etiquetas else "markers",
             name=cfg["etiqueta"], showlegend=mostrar_nombre,
             marker=dict(symbol=cfg["simbolo"], size=10, color=cfg["color"],
                         line=dict(width=1.5, color=cfg["color"])),
+            text=texto, textposition="top center",
+            textfont=dict(size=9, color=cfg["color"]),
+            cliponaxis=False,
             customdata=m[["codigo", "delta"]],
             hovertemplate=(cfg["etiqueta"] + " %{customdata[0]}<br>%{x|%d/%m/%Y}"
                            "<br>%{customdata[1]:+,.0f} u → stock %{y:,.0f}"
@@ -282,7 +295,7 @@ def render(proyecto):
         return
     opciones = res["codigo"].tolist()[:500]
     etiqueta = dict(zip(res["codigo"], res["descripcion"].fillna("")))
-    sc1, sc2 = st.columns([3, 2])
+    sc1, sc2, sc3 = st.columns([3, 2, 2])
     with sc1:
         sku = st.selectbox(
             "SKU", opciones,
@@ -295,6 +308,15 @@ def render(proyecto):
             format_func=lambda t: TIPOS_MARCA[t]["etiqueta"],
             help="Pone una marca sobre la curva el día que hubo remitos, "
                  "inventario físico, ajustes de merma o transformaciones.")
+    with sc3:
+        etiquetas_sel = st.checkbox(
+            "Fecha y cantidad en las marcas", value=True, key="ser_etiquetas",
+            help="Escribe la fecha y la variación al lado de cada marca, en "
+                 "vez de mostrarlas solo al pasar el mouse.")
+
+    abrev_suc = sucursales.set_index("codigodepo")["abreviacion"].to_dict()
+    titulo_sku = (f"{abrev_suc.get(suc_sel) or suc_sel} | {sku} — "
+                  f"{str(etiqueta.get(sku, '')).strip()}").strip(" —")
 
     d = serie_diaria(serie, sku)
     fig = go.Figure()
@@ -304,8 +326,10 @@ def render(proyecto):
     for ini, fin in _rachas_quiebre(d)[:60]:
         fig.add_vrect(x0=ini, x1=fin, fillcolor="#ff6b6b", opacity=0.18,
                       line_width=0)
-    _marcas(fig, serie, sku, tipos)
-    fig.update_layout(height=380, xaxis=dict(gridcolor=color_grilla()),
+    _marcas(fig, serie, sku, tipos, mostrar_etiquetas=etiquetas_sel)
+    fig.update_layout(height=380 if not etiquetas_sel else 440,
+                      title=dict(text=titulo_sku, x=0, xanchor="left"),
+                      xaxis=dict(gridcolor=color_grilla()),
                       yaxis=dict(title="Unidades", gridcolor=color_grilla()),
                       **layout_grafico())
     st.plotly_chart(fig, width="stretch")

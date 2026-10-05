@@ -34,11 +34,13 @@ from ui.comun import CSS
 from ui.paginas import (
     inicio,
     merma_analisis, merma_control, merma_avance, merma_transformaciones,
+    merma_matriz,
     inventario_salud, inventario_politicas, inventario_series, inventario_cruce,
     inventario_interanual, inventario_reposicion, inventario_pedido_sucursal,
-    inventario_pedido_general,
+    inventario_pedido_general2,
     distribucion_transferencias, distribucion_diferencias,
     comercial_margenes, comercial_comprobantes, forecasting,
+    no_conformidades,
 )
 from core.auth import PAGINAS_DISPONIBLES, TODAS_LAS_PAGINAS
 
@@ -111,6 +113,7 @@ RENDER = {
     "Análisis":          merma_analisis.render,
     "Control de merma":  merma_control.render,
     "Avance de inventario": merma_avance.render,
+    "Matriz por sucursal": merma_matriz.render,
     "Transformaciones":  merma_transformaciones.render,
     "Salud de stock":    inventario_salud.render,
     "Serie de stock":    inventario_series.render,
@@ -118,13 +121,14 @@ RENDER = {
     "Evolución interanual": inventario_interanual.render,
     "Perfil de reposición": inventario_reposicion.render,
     "Pedido desde sucursal": inventario_pedido_sucursal.render,
-    "Pedido general de distribución": inventario_pedido_general.render,
+    "Pedido general de distribución 2": inventario_pedido_general2.render,
     "Min / Opt / Max":   inventario_politicas.render,
     "Transferencias":    distribucion_transferencias.render,
     "Diferencias de camión": distribucion_diferencias.render,
     "Márgenes":          comercial_margenes.render,
     "Comprobantes y canasta": comercial_comprobantes.render,
     "Forecast":          forecasting.render,
+    "No conformidades":  no_conformidades.render,
 }
 
 

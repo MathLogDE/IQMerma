@@ -19,6 +19,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from setup_db import get_db_path, get_connection, modo_solo_lectura
+from core.calidad_datos import (
+    detectar_dias_anomalos, resumen_dias_anomalos, MAX_SUCURSALES_AISLADO,
+)
 from core.comun import (
     listar_categorias, listar_fechas_valorizacion,
     catalogo_articulos, filtrar_catalogo,
@@ -29,6 +32,7 @@ from core.merma.analisis import (
     calcular_merma, merma_por_sucursal,
     calcular_merma_dinamica, merma_por_sucursal_dinamica,
     fechas_corte_comprobante,
+    merma_matriz_sucursal, NIVELES_MATRIZ, TOTAL_MATRIZ,
 )
 from core.merma.avance import (
     avance_matriz, avance_conteo, NIVELES_AVANCE, METODOS_DENOMINADOR,
@@ -70,6 +74,12 @@ from core.forecasting.demanda import (
     forecast_ventas, serie_mensual_real, estimar_demanda_stock_sku, NIVELES, METRICAS,
     MIN_MESES_KNN,
 )
+from core.forecasting.segmentacion import clasificar_demanda_sku, SEGMENTOS
+from core.forecasting.intermitente import forecast_intermitente
+from core.forecasting.pooled import forecast_pooled
+from core.forecasting.semanal import forecast_ventas_semanal, NIVELES_SEMANAL
+from core.forecasting.semanal_sku import forecast_semanal_sku, LIMITE_COMBINACIONES
+from core.forecasting.evaluacion import evaluar_modelos
 from core.reporte import (
     generar_reporte, generar_reporte_control, generar_reporte_salud,
     generar_reporte_politicas, generar_reporte_forecast, generar_reporte_transferencias,
@@ -325,6 +335,16 @@ def listar_periodos_ingesta(proyecto: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
+def dias_anomalos_cacheados(proyecto: str, fecha_desde: str, fecha_hasta: str,
+                            ratio_umbral: float = 0.15,
+                            mediana_minima: float = 30.0) -> pd.DataFrame:
+    """Cachea la detección de días anómalos por sucursal — recorre todo el
+    histórico de movimientos agrupado por sucursal y día de semana."""
+    return detectar_dias_anomalos(proyecto, fecha_desde, fecha_hasta,
+                                  ratio_umbral=ratio_umbral, mediana_minima=mediana_minima)
+
+
+@st.cache_data(show_spinner=False)
 def catalogo_cacheado(proyecto: str) -> pd.DataFrame:
     """Catálogo de SKUs con jerarquía resuelta (para armar los filtros)."""
     return catalogo_articulos(proyecto)
@@ -339,6 +359,61 @@ def forecast_ventas_cacheado(proyecto: str, codigodepo: str | None, nivel: str,
     rubro); evita recalcular al repetir los mismos parámetros."""
     return forecast_ventas(proyecto, codigodepo=codigodepo, nivel=nivel,
                            horizonte=horizonte, backtest=backtest, metrica=metrica)
+
+
+@st.cache_data(show_spinner=False)
+def clasificar_demanda_sku_cacheada(proyecto: str, meses_min_historia: int = 6) -> pd.DataFrame:
+    """Cachea la clasificación de demanda por SKU (ADI/CV² sobre ~30k SKUs
+    con ventas — recorre todo el histórico de movimientos)."""
+    return clasificar_demanda_sku(proyecto, meses_min_historia=meses_min_historia)
+
+
+@st.cache_data(show_spinner=False)
+def forecast_intermitente_cacheado(proyecto: str, horizonte: int = 18,
+                                   backtest: int = 3) -> pd.DataFrame:
+    """Cachea Croston/TSB para el segmento intermitente (~10s sobre ~2.4k
+    SKUs en el proyecto real — corre una sola vez por sesión de caché)."""
+    return forecast_intermitente(proyecto, horizonte=horizonte, backtest=backtest)
+
+
+@st.cache_data(show_spinner=False)
+def forecast_pooled_cacheado(proyecto: str, horizonte: int = 18,
+                             backtest: int = 3) -> pd.DataFrame:
+    """Cachea LightGBM pooled para continuo/errático/lumpy (~30-40s sobre
+    ~17k SKUs en el proyecto real — corre una sola vez por sesión de caché)."""
+    return forecast_pooled(proyecto, horizonte=horizonte, backtest=backtest)
+
+
+@st.cache_data(show_spinner=False)
+def forecast_ventas_semanal_cacheado(proyecto: str, nivel: str = "total",
+                                     horizonte: int = 12, backtest: int = 12,
+                                     metrica: str = "ventas") -> pd.DataFrame:
+    """Cachea el forecast semanal con feriados AR (Prophet) — un ajuste
+    aislado es rápido, pero cada grupo hace 2 (backtest + final)."""
+    return forecast_ventas_semanal(proyecto, nivel=nivel, horizonte=horizonte,
+                                   backtest=backtest, metrica=metrica)
+
+
+@st.cache_data(show_spinner=False)
+def forecast_semanal_sku_cacheado(proyecto: str, codigos: tuple,
+                                  codigodepos: tuple | None = None,
+                                  horizonte: int = 14, anios_comparacion: int = 3,
+                                  backtest: int = 12) -> pd.DataFrame:
+    """Cachea el forecast semanal por SKU (Prophet, una corrida por SKU ×
+    sucursal elegida — ver core.forecasting.semanal_sku) para no recalcular
+    al repetir los mismos filtros en la misma sesión."""
+    return forecast_semanal_sku(
+        proyecto, codigos=list(codigos),
+        codigodepos=list(codigodepos) if codigodepos else None,
+        horizonte=horizonte, anios_comparacion=anios_comparacion, backtest=backtest,
+    )
+
+
+@st.cache_data(show_spinner=False)
+def evaluar_modelos_cacheado(proyecto: str, backtest: int = 3) -> pd.DataFrame:
+    """Cachea la evaluación comparativa (baseline vs. método nuevo por
+    segmento) — reentrena LightGBM pooled para el backtest, ~1-2 min."""
+    return evaluar_modelos(proyecto, backtest=backtest)
 
 
 def filtros_catalogo(cat: pd.DataFrame, key: str,
@@ -491,7 +566,9 @@ def a_excel(df: pd.DataFrame) -> bytes:
 
 
 _FORMATO_MONEDA = '"$" #,##0'
+_FORMATO_MONEDA_MILES = '"$" #,##0.0'
 _FORMATO_1_DECIMAL = "0.0"
+_FORMATO_ENTERO = "0"
 
 
 def a_excel_pedido_general(tabla: pd.DataFrame) -> bytes:
@@ -515,8 +592,9 @@ def a_excel_pedido_general(tabla: pd.DataFrame) -> bytes:
 
     Formato numérico:
     - costo, lista_1: moneda (`_FORMATO_MONEDA`).
-    - vta_prom_*, pedido_* (por sucursal) y pedido_consolidado: 1 decimal
-      (`_FORMATO_1_DECIMAL`).
+    - vta_prom_*: 1 decimal (`_FORMATO_1_DECIMAL`).
+    - pedido_* (por sucursal) y pedido_consolidado: entero, sin decimales
+      (`_FORMATO_ENTERO`).
 
     Formato condicional (relleno negro, letra blanca):
     - Columnas de stock (stock_cd_* y stock_*): valor <= 0.
@@ -540,8 +618,9 @@ def a_excel_pedido_general(tabla: pd.DataFrame) -> bytes:
     cols_pedido = [c for c in tabla.columns
                    if c.startswith("pedido_") and c != "pedido_consolidado"]
     cols_moneda = [c for c in ("costo", "lista_1") if c in tabla.columns]
-    cols_1_decimal = [*cols_vta, *cols_pedido,
-                       *(["pedido_consolidado"] if "pedido_consolidado" in tabla.columns else [])]
+    cols_1_decimal = list(cols_vta)
+    cols_entero = [*cols_pedido,
+                   *(["pedido_consolidado"] if "pedido_consolidado" in tabla.columns else [])]
 
     def _abrev(nombre, prefijo):
         return nombre[len(prefijo):]
@@ -595,6 +674,9 @@ def a_excel_pedido_general(tabla: pd.DataFrame) -> bytes:
             for c in cols_1_decimal:
                 for fila in range(fila_desde, fila_hasta + 1):
                     ws.cell(row=fila, column=col_idx(c)).number_format = _FORMATO_1_DECIMAL
+            for c in cols_entero:
+                for fila in range(fila_desde, fila_hasta + 1):
+                    ws.cell(row=fila, column=col_idx(c)).number_format = _FORMATO_ENTERO
 
             for c in cols_stock:
                 ws.conditional_formatting.add(
@@ -635,6 +717,186 @@ def a_excel_pedido_general(tabla: pd.DataFrame) -> bytes:
 
             for grupo in (cols_datos, cols_vta, cols_stock, cols_pedido):
                 borde_grupo(grupo)
+    return buf.getvalue()
+
+
+def a_excel_forecast_semanal_sku(df_tidy: pd.DataFrame, anios_comparacion: int,
+                                 stock_actual: dict | None = None) -> bytes:
+    """
+    Pivotea el resultado tidy de `forecast_semanal_sku` (core.forecasting.
+    semanal_sku) a una planilla ancha estilo pedido de compras: una fila por
+    SKU, columnas agrupadas por semana con "Prevista"/"Año-1"/.../"Año-n"
+    como subcolumnas. Usa el merge automático de encabezados de pandas para
+    columnas MultiIndex (`to_excel(merge_cells=True)`, el default) en vez de
+    replicar a mano el `ws.merge_cells` de `a_excel_pedido_general` — mismo
+    resultado visual, menos código.
+
+    `stock_actual`: dict opcional {codigo: stock} (el `attrs["stock_actual"]`
+    de `forecast_semanal_sku`) — si se pasa, se agrega como columna "Stock
+    actual" junto a Código/Descripción/Rubro/Marca, antes de las columnas de
+    semanas, con el último stock disponible para ese SKU en la(s) sucursal(es)
+    elegida(s) al generar el export.
+
+    `aggfunc=lambda s: s.sum(min_count=1)` en vez de "sum" a secas: el tidy
+    trae como mucho una fila por (codigo, semana, serie), pero un `sum()`
+    sobre un único valor None lo convierte en 0.0 (comportamiento por
+    defecto de pandas) — acá se necesita que "sin historia" viaje como
+    celda vacía, nunca como 0 (ver docstring del módulo de forecasting).
+    `dropna=False` para que una combinación semana×año sin ningún dato en
+    todo el recorte no desaparezca la columna entera, en vez de mostrarla
+    vacía.
+
+    El pivot usa `index="codigo"` (una sola columna) y no
+    `index=["codigo","descripcion","rubro","marca"]`: con `dropna=False`,
+    pivotear directo sobre 4 columnas de índice le hace armar a pandas el
+    producto cartesiano de sus valores únicos (3 SKUs con 3 descripciones/
+    rubros/marcas distintas salen 81 filas, no 3) en vez de solo las
+    combinaciones que existen — descripcion/rubro/marca se reincorporan
+    después con un join, ya sin ese riesgo.
+    """
+    if df_tidy.empty:
+        return a_excel(df_tidy)
+
+    df = df_tidy.copy()
+    df["serie"] = df["anio_offset"].map(lambda k: "Prevista" if k == 0 else f"Año-{k}")
+    orden_serie = ["Prevista"] + [f"Año-{k}" for k in range(1, anios_comparacion + 1)]
+
+    ancho = df.pivot_table(
+        index="codigo", columns=["semana", "serie"], values="unidades",
+        aggfunc=lambda s: s.sum(min_count=1), dropna=False,
+    )
+    semanas = sorted(ancho.columns.get_level_values(0).unique())
+    cols_ordenadas = [(s, serie) for s in semanas for serie in orden_serie
+                      if (s, serie) in ancho.columns]
+    ancho = ancho[cols_ordenadas]
+
+    identidad = (df[["codigo", "descripcion", "rubro", "marca"]]
+                .drop_duplicates("codigo").set_index("codigo")
+                .rename(columns={"descripcion": "Descripción", "rubro": "Rubro",
+                                 "marca": "Marca"}))
+    if stock_actual:
+        identidad["Stock actual"] = identidad.index.map(stock_actual)
+    identidad.columns = pd.MultiIndex.from_product([identidad.columns, [""]])
+    ancho = identidad.join(ancho)
+    ancho.columns = ancho.columns.set_names(["Semana", ""])
+    ancho.index.name = "Código"
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        ancho.to_excel(writer, sheet_name="Forecast semanal SKU", merge_cells=True)
+        ws = writer.sheets["Forecast semanal SKU"]
+        # 3 filas de encabezado (semana combinada, subcolumna, nombres de
+        # índice) + datos desde la fila 4. Sin límite de columna: las de
+        # identidad (Código/Descripción/Rubro/Marca/Stock actual) son texto
+        # salvo Stock actual, y el filtro isinstance de abajo ya descarta
+        # las que no son numéricas.
+        for fila in ws.iter_rows(min_row=4):
+            for celda in fila:
+                if isinstance(celda.value, (int, float)):
+                    celda.number_format = _FORMATO_ENTERO
+    return buf.getvalue()
+
+
+_ETQ_NIVEL_MATRIZ = {"rubro": "Rubro", "gran_super_rubro": "Gran Super Rubro",
+                     "marca": "Marca", "codigo": "Código"}
+
+
+SKUS_ACTIVOS_MATRIZ = "SKUs activos"
+
+
+def grupo_metrica_matriz(metrica: str) -> str:
+    """'Inventario $' -> 'Inventario', 'Venta u' -> 'Venta', 'SKUs inv.' igual."""
+    for sufijo in (" u", " $"):
+        if metrica.endswith(sufijo):
+            return metrica[:-len(sufijo)]
+    return metrica
+
+
+def grupos_matriz_merma(df_largo: pd.DataFrame) -> list[str]:
+    """Grupos de métricas de la matriz, en el orden de columnas."""
+    return [SKUS_ACTIVOS_MATRIZ] + list(dict.fromkeys(
+        grupo_metrica_matriz(m) for m in df_largo.attrs["metricas"]))
+
+
+def matriz_merma_ancha(df_largo: pd.DataFrame, etiquetas_suc: dict,
+                       signo_real: bool = False, miles: bool = False,
+                       grupos: list[str] | None = None) -> pd.DataFrame:
+    """
+    Pivotea el resultado largo de `merma_matriz_sucursal` a columnas
+    MultiIndex (sucursal, métrica): sucursales en orden de codigodepo con su
+    abreviatura (`etiquetas_suc`, ver `abreviaciones_sucursal`), el bloque
+    Total al final. Con nivel "codigo" agrega la descripción como primera
+    columna. "SKUs activos" (flag del ERP) va una sola vez, antes de las
+    sucursales: es igual para todas. Combinaciones sin datos van en 0.
+
+    signo_real: invierte las categorías de merma (Inventario, Ajustes...)
+                para mostrar el movimiento real (sobrante positivo).
+    miles:      valorizados ($) divididos por 1000.
+    grupos:     grupos de métricas a mostrar (ver `grupos_matriz_merma`);
+                None = todos.
+    """
+    a = df_largo.attrs
+    # Las filas no dependen de qué métricas se muestren.
+    filas = sorted(df_largo["nivel_valor"].unique())
+    df_largo = df_largo.copy()
+    metricas = list(a["metricas"])
+    if grupos is not None:
+        metricas = [m for m in metricas if grupo_metrica_matriz(m) in set(grupos)]
+        df_largo = df_largo[df_largo["metrica"].isin(set(metricas))]
+    if signo_real:
+        de_merma = df_largo["metrica"].map(grupo_metrica_matriz).isin(
+            set(a.get("categorias_merma", [])))
+        df_largo.loc[de_merma, "valor"] = -df_largo.loc[de_merma, "valor"]
+    if miles:
+        es_val = df_largo["metrica"].str.endswith("$")
+        df_largo.loc[es_val, "valor"] = df_largo.loc[es_val, "valor"] / 1000
+        renombre = {m: f"{m} (miles)" for m in metricas if m.endswith("$")}
+        df_largo["metrica"] = df_largo["metrica"].replace(renombre)
+        metricas = [renombre.get(m, m) for m in metricas]
+    depos = list(a["sucursales"]) + [TOTAL_MATRIZ]
+    ancho = df_largo.groupby(["nivel_valor", "codigodepo", "metrica"])["valor"].sum()
+    ancho = ancho.unstack(["codigodepo", "metrica"]) if len(ancho) else pd.DataFrame()
+    cols = pd.MultiIndex.from_product([depos, metricas])
+    ancho = ancho.reindex(index=filas, columns=cols).fillna(0.0)
+    ancho.columns = pd.MultiIndex.from_arrays(
+        [[etiquetas_suc.get(d, d) for d, _ in cols], [m for _, m in cols]])
+    if a["nivel"] == "codigo":
+        ancho.insert(0, ("Descripción", ""), ancho.index.map(a["descripciones"]))
+    if grupos is None or SKUS_ACTIVOS_MATRIZ in grupos:
+        activos = ancho.index.map(a.get("skus_activos", {})).fillna(0).astype(int)
+        ancho.insert(1 if a["nivel"] == "codigo" else 0,
+                     (SKUS_ACTIVOS_MATRIZ, ""), activos)
+    ancho.index.name = _ETQ_NIVEL_MATRIZ[a["nivel"]]
+    return ancho
+
+
+def a_excel_matriz_merma(ancho: pd.DataFrame, parametros: dict) -> bytes:
+    """
+    Serializa `matriz_merma_ancha` a .xlsx: encabezado combinado por
+    sucursal (mismo mecanismo que `a_excel_forecast_semanal_sku`), $ con
+    formato moneda y el resto entero. `parametros` (período, filtros...) va
+    en una segunda hoja.
+    """
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        ancho.to_excel(writer, sheet_name="Matriz", merge_cells=True)
+        ws = writer.sheets["Matriz"]
+        # 3 filas de encabezado (sucursal, métrica, nombre del índice) y la
+        # columna A es el índice: la columna j del df es la j+2 de la hoja.
+        for j, (_, metrica) in enumerate(ancho.columns, start=2):
+            if not metrica:
+                continue
+            if metrica.endswith("(miles)"):
+                fmt = _FORMATO_MONEDA_MILES
+            elif metrica.endswith("$"):
+                fmt = _FORMATO_MONEDA
+            else:
+                fmt = _FORMATO_ENTERO
+            for (celda,) in ws.iter_rows(min_row=4, min_col=j, max_col=j):
+                celda.number_format = fmt
+        ws.freeze_panes = ws.cell(row=4, column=2)
+        pd.DataFrame(list(parametros.items()), columns=["Parámetro", "Valor"]).to_excel(
+            writer, sheet_name="Parámetros", index=False)
     return buf.getvalue()
 
 
@@ -711,6 +973,20 @@ def avance_matriz_cacheada(proyecto: str, fecha_desde: str, fecha_hasta: str,
         metodo_denominador=metodo_denominador,
         codigos=list(codigos) if codigos is not None else None,
         codigodepo=list(codigodepo) if codigodepo is not None else None,
+    )
+
+
+@st.cache_data(show_spinner=False)
+def merma_matriz_cacheada(proyecto: str, fecha_desde: str, fecha_hasta: str,
+                          nivel: str, modo_valorizacion: str, fecha_valorizacion,
+                          codigos: tuple | None,
+                          codigodepo: tuple | None = None) -> pd.DataFrame:
+    return merma_matriz_sucursal(
+        proyecto, fecha_desde, fecha_hasta, nivel,
+        codigodepo=list(codigodepo) if codigodepo is not None else None,
+        codigos=list(codigos) if codigos is not None else None,
+        modo_valorizacion=modo_valorizacion,
+        fecha_valorizacion=fecha_valorizacion,
     )
 
 

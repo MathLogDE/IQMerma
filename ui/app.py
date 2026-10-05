@@ -20,14 +20,15 @@ if str(ROOT) not in sys.path:
 
 from ui.comun import CSS
 from ui.paginas import (
-    inicio, ingesta,
+    inicio, ingesta, calidad_datos,
     merma_analisis, merma_control, merma_avance, merma_ultimos_movimientos,
-    merma_transformaciones,
+    merma_transformaciones, merma_matriz,
     inventario_salud, inventario_politicas, inventario_series, inventario_cruce,
     inventario_interanual, inventario_reposicion, inventario_pedido_sucursal,
     inventario_pedido_general, inventario_pedido_general2,
     distribucion_transferencias, distribucion_diferencias,
     comercial_margenes, comercial_comprobantes, forecasting,
+    no_conformidades,
 )
 
 
@@ -49,25 +50,27 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------------------------------------------------------------------
 
 SECCIONES = {
-    "General":       ["Inicio", "Ingesta"],
+    "General":       ["Inicio", "Ingesta", "Calidad de datos"],
     "Merma":         ["Análisis", "Control de merma", "Avance de inventario",
-                      "Últimos movimientos", "Transformaciones"],
+                      "Matriz por sucursal", "Últimos movimientos", "Transformaciones"],
     "Inventario":    ["Salud de stock", "Serie de stock", "Cruce por sucursal",
                       "Evolución interanual", "Perfil de reposición",
-                      "Pedido desde sucursal", "Pedido general de distribución",
-                      "Pedido general de distribución 2",
+                      "Pedido desde sucursal", "Pedido general de distribución 2",
                       "Min / Opt / Max"],
     "Distribución":  ["Transferencias", "Diferencias de camión"],
     "Comercial":     ["Márgenes", "Comprobantes y canasta"],
     "Forecasting":   ["Forecast"],
+    "Auditoría":     ["No conformidades"],
 }
 
 RENDER = {
     "Inicio":            inicio.render,
     "Ingesta":           ingesta.render,
+    "Calidad de datos":  calidad_datos.render,
     "Análisis":          merma_analisis.render,
     "Control de merma":  merma_control.render,
     "Avance de inventario": merma_avance.render,
+    "Matriz por sucursal": merma_matriz.render,
     "Últimos movimientos": merma_ultimos_movimientos.render,
     "Transformaciones":  merma_transformaciones.render,
     "Salud de stock":    inventario_salud.render,
@@ -84,6 +87,7 @@ RENDER = {
     "Márgenes":          comercial_margenes.render,
     "Comprobantes y canasta": comercial_comprobantes.render,
     "Forecast":          forecasting.render,
+    "No conformidades":  no_conformidades.render,
 }
 
 

@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from ui.comun import *  # noqa: F401,F403
 from core.auth import (
     PAGINAS_DISPONIBLES, TODAS_LAS_PAGINAS, set_acceso_pagina, set_acceso_paginas,
+    ROLES_NC, set_roles_nc,
 )
 
 
@@ -307,6 +308,22 @@ def render(proyecto):
                             # quedar con un valor viejo pegado.
                             st.session_state.pop(key_todo, None)
                             st.rerun()
+
+        st.markdown("---")
+        st.markdown("###### Roles en No conformidades")
+        st.caption(
+            "Ver la página no alcanza para operar: cada acción exige su rol. "
+            "Quien verifica la eficacia no puede ser quien cargó el descargo."
+        )
+        for u, d in sorted(usuarios.items()):
+            actuales = d.get("roles_nc") or []
+            elegidos = st.multiselect(
+                f"{u} — {d.get('name', '')}", list(ROLES_NC), default=actuales,
+                format_func=lambda r: f"{r} · {ROLES_NC[r]}", key=f"roles_nc_{u}",
+            )
+            if sorted(elegidos) != sorted(actuales):
+                set_roles_nc(u, elegidos)
+                st.rerun()
 
         st.markdown("---")
         st.markdown("###### Crear usuario nuevo")
