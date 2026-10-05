@@ -8,6 +8,9 @@ projects/
 # cookie) — nunca al repo. auth/usuarios.ejemplo.yaml sí se versiona.
 auth/usuarios.yaml
 
+# Contraseña de aplicación de Gmail para notificar NC (core/nc_mail.py)
+auth/smtp.json
+
 # Exports generados
 exports/
 

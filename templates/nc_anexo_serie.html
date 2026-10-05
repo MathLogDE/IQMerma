@@ -1,0 +1,34 @@
+<p class="anexo-meta">Sucursal {{ p.sucursal_nombre or p.codigodepo }} · período {{ desde }} – {{ hasta }}
+    · stock anclado al snapshot del {{ fecha_stock }}{% if corte %} · movimientos hasta el {{ corte }}{% endif %}.
+    Stock reconstruido día a día desde el snapshot y los movimientos del ERP; las zonas sombreadas son tramos sin stock.</p>
+{% for b in bloques %}
+<div class="anexo-bloque">
+    <h3>{{ b.codigo }} — {{ b.descripcion }}</h3>
+    {% if b.sin_datos %}
+    <p class="anexo-meta">Sin movimientos ni stock en la sucursal durante el período.</p>
+    {% else %}
+    <div class="grafico">{{ b.svg | safe }}</div>
+    <div class="anexo-kpis">
+        <span>Stock al cierre: <b>{{ b.stock_final | unidades }}</b></span>
+        {% if b.stock_prom is defined %}
+        <span>Promedio: <b>{{ b.stock_prom | unidades }}</b></span>
+        <span>Mín / máx: <b>{{ b.stock_min | unidades }} / {{ b.stock_max | unidades }}</b></span>
+        <span>Días sin stock: <b>{{ b.dias_quiebre }}</b></span>
+        {% endif %}
+    </div>
+    {% if b.eventos %}
+    <table>
+        <thead><tr><th>Fecha</th><th>Movimiento</th><th class="num">Variación</th><th class="num">Stock resultante</th></tr></thead>
+        <tbody>
+        {% for e in b.eventos %}
+        <tr><td>{{ e.fecha }}</td><td>{{ e.tipo }}</td><td class="num">{{ e.delta }}</td><td class="num">{{ e.stock }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <p class="anexo-meta">Últimos {{ b.eventos | length }} inventarios, ajustes, diferencias de camión o transformaciones del período.</p>
+    {% else %}
+    <p class="anexo-meta">Sin inventarios ni ajustes en el período.</p>
+    {% endif %}
+    {% endif %}
+</div>
+{% endfor %}

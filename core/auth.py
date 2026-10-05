@@ -28,14 +28,25 @@ _COOKIE_DEFAULT = {"name": "mermaiq_cliente", "expiry_days": 30}
 PAGINAS_DISPONIBLES = {
     "General":       ["Inicio"],
     "Merma":         ["Análisis", "Control de merma", "Avance de inventario",
-                      "Transformaciones"],
+                      "Matriz por sucursal", "Transformaciones"],
     "Inventario":    ["Salud de stock", "Serie de stock", "Cruce por sucursal",
                       "Evolución interanual", "Perfil de reposición",
-                      "Pedido desde sucursal", "Pedido general de distribución",
+                      "Pedido desde sucursal", "Pedido general de distribución 2",
                       "Min / Opt / Max"],
     "Distribución":  ["Transferencias", "Diferencias de camión"],
     "Comercial":     ["Márgenes", "Comprobantes y canasta"],
     "Forecasting":   ["Forecast"],
+    "Auditoría":     ["No conformidades"],
+}
+
+# Roles de acción dentro de "No conformidades" (core/no_conformidades.py).
+# Ver la página no alcanza para operar: cada acción exige su rol, y quien
+# verifica la eficacia no puede ser quien cargó el descargo.
+ROLES_NC = {
+    "nc_emitir":    "Emitir, enviar, observar o aceptar descargos, cargar el SOP",
+    "nc_responder": "Transcribir el descargo de la sucursal",
+    "nc_verificar": "Verificar la eficacia y cerrar",
+    "nc_anular":    "Anular una NC ya notificada",
 }
 
 TODAS_LAS_PAGINAS = [p for paginas in PAGINAS_DISPONIBLES.values() for p in paginas]
@@ -151,4 +162,14 @@ def set_acceso_paginas(username: str, paginas: list[str], tiene_acceso: bool) ->
 def eliminar_usuario(username: str) -> None:
     config = _cargar()
     config["credentials"]["usernames"].pop(username, None)
+    _guardar(config)
+
+
+def set_roles_nc(username: str, roles: list[str]) -> None:
+    """Reemplaza los roles de No conformidades del usuario."""
+    config = _cargar()
+    usuarios = config["credentials"]["usernames"]
+    if username not in usuarios:
+        raise ValueError(f"El usuario '{username}' no existe.")
+    usuarios[username]["roles_nc"] = sorted(r for r in set(roles) if r in ROLES_NC)
     _guardar(config)

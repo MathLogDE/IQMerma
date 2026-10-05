@@ -26,6 +26,8 @@ Generadores (uno por página de la app):
     generar_reporte_avance_general(...) Avance de inventario — matriz por sucursal
     generar_reporte_avance_conteo(...)  Avance de inventario — conteo y diferencias
     generar_reporte_pedido_sucursal(...) Pedido desde sucursal
+    generar_no_conformidad(...)        No conformidad (se congela al emitir, ver
+                                       core/no_conformidades.py)
 """
 
 import base64
@@ -252,10 +254,7 @@ def generar_reporte(
         u = float(df[cu].sum()) if cu in df.columns else 0.0
         if abs(v) > 0:
             composicion.append({"nombre": c, "valor": v, "unidades": u})
-    comp_max = max((abs(c["valor"]) for c in composicion), default=0)
     for c in composicion:
-        c["share"] = c["valor"] / merma_total * 100 if merma_total else 0
-        c["share_w"] = _w(abs(c["valor"]), comp_max)
         c["neg"] = c["valor"] < 0
     composicion.sort(key=lambda c: -c["valor"])
 
@@ -332,7 +331,10 @@ def generar_reporte(
         "neg":     r["merma"] < 0,
     } for _, r in df_r.iterrows()]
 
-    df_top = df[df["merma_total_valorizada"] > 0].nlargest(top_n, "merma_total_valorizada")
+    df_nz = df[df["merma_total_valorizada"] != 0]
+    df_top = df_nz.reindex(
+        df_nz["merma_total_valorizada"].abs().sort_values(ascending=False).index
+    ).head(top_n)
     top_skus = [{
         "codigo":      s["codigo"],
         "descripcion": (s["descripcion"] or "")[:50] if pd.notna(s["descripcion"]) else "",
@@ -1529,3 +1531,85 @@ def generar_reporte_transformaciones(
         top_alta=top_alta, graf_alta=graf_alta,
         pares=filas_pares,
     )
+
+
+# ---------------------------------------------------------------------------
+# No conformidad
+# ---------------------------------------------------------------------------
+
+def generar_no_conformidad(proyecto, nc: dict, cfg: dict) -> str:
+    """
+    HTML de la NC al momento de emitir. Los plazos van RELATIVOS a la
+    notificación (las fechas concretas se fijan al registrar el envío), así el
+    documento no depende de cuándo se entregue. Con autoescape: todo el texto
+    es carga libre del usuario.
+    """
+    from datetime import date as _date
+    from core.no_conformidades import numero_impreso
+
+    env = _env()
+    env.autoescape = True
+    impactos = nc.get("impactos") or []
+    if isinstance(impactos, str):
+        impactos = json.loads(impactos)
+    acciones = nc.get("acciones_recomendadas") or []
+    if isinstance(acciones, str):
+        acciones = json.loads(acciones)
+
+    if nc.get("plazo_contencion_horas"):
+        contencion = f"{nc['plazo_contencion_horas']} horas corridas"
+    elif nc.get("contencion_con_descargo"):
+        contencion = "junto con el descargo"
+    else:
+        contencion = "no aplica"
+    n = nc["plazo_descargo_dias"]
+    descargo = f"{n} días hábiles" if n != 1 else "1 día hábil"
+    impl = (f"hasta {nc['plazo_impl_max_dias']} días corridos"
+            if nc.get("plazo_impl_max_dias") else "fecha que proponga la sucursal en el descargo")
+
+    req = (nc.get("req_texto") or "").strip()
+    extracto = req if len(req) <= 900 else req[:900].rsplit(" ", 1)[0] + " […]"
+    linea_base = ""
+    if nc.get("merma_linea_base") is not None:
+        unidad = nc.get("linea_base_unidad") or ""
+        valor = (f"$ {nc['merma_linea_base']:,.0f}" if unidad == "$"
+                 else f"{nc['merma_linea_base']:,.2f} {unidad}".strip())
+        linea_base = valor + (f" — {nc['linea_base_fuente']}" if nc.get("linea_base_fuente") else "")
+
+    if len(impactos) > 1:
+        imp_txt = ", ".join(impactos[:-1]) + " y " + impactos[-1]
+    else:
+        imp_txt = "".join(impactos)
+    tipos = cfg["tipos"]
+    emitida = datetime.fromisoformat(nc["emitida_en"]).strftime("%d/%m/%Y %H:%M")
+    return env.get_template("reporte_no_conformidad.html").render(
+        titulo="Reporte de no conformidad",
+        meta={"proyecto": proyecto if isinstance(proyecto, str) else "", "generado": emitida},
+        branding=cargar_branding(proyecto if isinstance(proyecto, str) else None),
+        logo_iqmerma=LOGO_IQMERMA_URI,
+        nc=nc,
+        numero_impreso=numero_impreso(nc["numero"]),
+        fecha=_date.fromisoformat(nc["fecha"]).strftime("%d/%m/%Y"),
+        tipo_color=tipos.get(nc["tipo"], {}).get("color", "#999"),
+        severidad_max=max(t["severidad"] for t in tipos.values()),
+        req_extracto=extracto,
+        impactos=imp_txt,
+        acciones=acciones,
+        plazo_contencion=contencion,
+        plazo_descargo=descargo,
+        plazo_implementacion=impl,
+        linea_base=linea_base,
+        anexos=[a for a in nc.get("anexos", []) if a.get("imprimir")],
+        huella=(nc.get("sha256_contenido") or "")[:16],
+        emitida=emitida,
+    )
+
+
+def vista_anexo(proyecto, anexo: dict) -> str:
+    """Un anexo de NC suelto, con los estilos de los reportes (para la vista previa)."""
+    env = _env()
+    env.autoescape = True
+    return env.get_template("nc_anexo_vista.html").render(
+        titulo=anexo["titulo"], meta={"generado": anexo.get("generado_en", "")[:16]},
+        branding=cargar_branding(proyecto if isinstance(proyecto, str) else None),
+        logo_iqmerma=LOGO_IQMERMA_URI, html=anexo["html"])

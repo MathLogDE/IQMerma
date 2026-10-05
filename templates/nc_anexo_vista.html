@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block estilos %}
+    .anexo-meta { font-size: 8.5pt; color: var(--gris); margin: 2px 0 8px; }
+    .anexo-bloque { margin-bottom: 14px; }
+    .anexo-kpis { display: flex; flex-wrap: wrap; gap: 4px 22px; font-size: 9pt; margin: 2px 0 8px; }
+    h3 { font-size: 10pt; margin: 10px 0 4px; }
+    tr.destacado td { background: #fff3bf !important; font-weight: 600; }
+{% endblock %}
+{% block cuerpo %}{{ html | safe }}{% endblock %}
