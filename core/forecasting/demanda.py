@@ -10,11 +10,15 @@ Método — competencia de modelos por grupo (nunca una caja negra: queda
 registrado qué modelo ganó y con qué MAPE de backtest cada candidato, en
 attrs["modelo_elegido"] / attrs["mape_por_modelo"]):
 
-  1. Serie mensual de unidades por grupo. Winsorización por MAD: los meses
-     atípicos (>3.5·MAD de la mediana) se recortan para el AJUSTE — no
-     dominan ningún modelo — pero se reportan en attrs["meses_atipicos"]
-     para investigarlos (suelen ser lotes FB mayoristas o anulaciones
-     masivas).
+  1. Serie mensual de unidades por grupo. Winsorización por MAD, pero sobre
+     el RESIDUO de estación + tendencia (no sobre el valor crudo): un mes
+     puede ser el más alto del año sin ser atípico si la estación ya lo
+     explica (diciembre — pico real de fin de año/Navidad, no un error de
+     carga). Solo se recorta lo que se aparta del patrón estacional+tendencia
+     esperado (>3.5·MAD de ese residuo) para el AJUSTE — no domina ningún
+     modelo — y se reporta en attrs["meses_atipicos"] para investigarlo
+     (suelen ser lotes FB mayoristas o anulaciones masivas, no la estación
+     normal del negocio).
   2. Con >= MIN_MESES (12) de historia, se hace backtest (holdout de los
      últimos `backtest` meses) de todos los modelos aplicables y gana el
      de menor MAPE:
@@ -30,9 +34,11 @@ attrs["modelo_elegido"] / attrs["mape_por_modelo"]):
          (2 ciclos) — si no, corre sin estacionalidad.
        - "sarima": SARIMAX estacional (statsmodels), orden
          (1,1,1)x(1,1,1,12). Solo aplica con >= MIN_MESES_SARIMA (30) de
-         historia — hoy (2025 + 2026 parcial, ~19-20 meses) casi ningún
-         grupo lo dispara todavía; se activa solo, sin flag, cuando hay
-         historia real para sostenerlo.
+         historia TOTAL del grupo (el backtest entrena con menos, pero la
+         elegibilidad no depende de eso) — se activa solo, sin flag, cuando
+         hay historia real para sostenerlo. Excluido en nivel "marca"
+         (NIVELES_SIN_SARIMA): con cientos de grupos el costo de ajustar
+         SARIMA en cada uno no vale la pena (medido: ~217s vs ~21s sin él).
   3. Con entre MIN_MESES_KNN (3) y MIN_MESES-1 meses de historia, el grupo
      no se descarta: se le "presta" el patrón estacional + tendencia
      relativa de los K_VECINOS grupos más parecidos (kNN por similitud
@@ -74,6 +80,14 @@ MIN_MESES = 12
 MIN_MESES_SARIMA = 30
 MIN_MESES_KNN = 3
 K_VECINOS = 5
+
+# SARIMA es bastante más caro de ajustar que los otros modelos (cada grupo
+# corre 2 fits MLE: uno para el backtest, otro para la proyección final).
+# En "marca" (cientos de grupos) ese costo no vale la pena — se midió contra
+# el proyecto real: nivel "rubro" pasa de ~27s a ~76s habilitando SARIMA
+# (gana en 17/141 grupos), "marca" pasaría de ~21s a ~217s (gana en 50/587).
+# Ahí sigue compitiendo solo estacional_robusto vs holt_winters.
+NIVELES_SIN_SARIMA = {"marca"}
 
 
 # ---------------------------------------------------------------------------
@@ -175,19 +189,42 @@ def _indices_estacionales(serie: pd.Series) -> pd.Series:
     return idx / media if media > 0 else idx * 0 + 1.0
 
 
-def _winsorizar(y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _limpiar_serie(serie: pd.Series) -> tuple[pd.Series, np.ndarray]:
     """
-    Recorta outliers a mediana ± 3.5·MAD (escala normal) y piso en 0.
-    Returns (serie recortada, máscara de meses atípicos).
+    Recorta outliers a mediana ± 3.5·MAD, pero en el espacio del RESIDUO de
+    estación + tendencia — no en el valor crudo. Un mes puede ser el más alto
+    del año sin ser atípico si la estación ya lo explica (diciembre: pico real
+    de fin de año, no un error de carga); solo se recorta lo que se aparta del
+    patrón estacional+tendencia esperado.
+
+    1. Índice estacional preliminar (`_indices_estacionales`) sobre la serie
+       cruda.
+    2. Desestacionaliza y le ajusta tendencia Theil-Sen.
+    3. Mediana ± 3.5·MAD (escala normal) sobre ese residuo.
+    4. Reconstruye la serie limpia a partir del residuo recortado.
+
+    Returns (serie recortada con el mismo índice, máscara de meses atípicos).
     """
-    med = float(np.median(y))
-    mad = float(np.median(np.abs(y - med))) * 1.4826
+    y = serie.values.astype(float)
+    idx_est = _indices_estacionales(serie)
+    est = serie.index.month.map(idx_est).values
+    est = np.where(est > 0, est, 1.0)
+    deseason = y / est
+    t = np.arange(len(serie), dtype=float)
+    a, b = _theil_sen(t, deseason)
+    resid = deseason - (a + b * t)
+
+    med = float(np.median(resid))
+    mad = float(np.median(np.abs(resid - med))) * 1.4826
     if mad <= 0:
         y_fit = np.clip(y, 0, None)
-        return y_fit, np.zeros(len(y), dtype=bool)
-    lo, hi = max(med - 3.5 * mad, 0.0), med + 3.5 * mad
-    atipico = (y < lo) | (y > hi)
-    return np.clip(y, lo, hi), atipico
+        return pd.Series(y_fit, index=serie.index), np.zeros(len(y), dtype=bool)
+
+    lo, hi = med - 3.5 * mad, med + 3.5 * mad
+    atipico = (resid < lo) | (resid > hi)
+    resid_clip = np.clip(resid, lo, hi)
+    y_fit = np.clip((a + b * t + resid_clip) * est, 0, None)
+    return pd.Series(y_fit, index=serie.index), atipico
 
 
 def _theil_sen(t: np.ndarray, y: np.ndarray) -> tuple[float, float]:
@@ -305,16 +342,18 @@ MODELOS = {
 }
 
 
-def _candidatos_aplicables(n_meses: int) -> list[str]:
-    return [nombre for nombre, (_, minimo) in MODELOS.items() if n_meses >= minimo]
+def _candidatos_aplicables(n_meses: int, permitir_sarima: bool = True) -> list[str]:
+    return [nombre for nombre, (_, minimo) in MODELOS.items()
+            if n_meses >= minimo and (permitir_sarima or nombre != "sarima")]
 
 
 def _ajustar_con_modelo(nombre: str, serie: pd.Series, horizonte: int) -> dict | None:
-    """Winsoriza `serie` y corre el modelo `nombre`. None si el modelo no
-    converge (se trata como "no aplicable para este grupo/fold", no como
-    error fatal — el caller sigue con los demás candidatos)."""
-    y_fit, atipicos = _winsorizar(serie.values.astype(float))
-    serie_fit = pd.Series(y_fit, index=serie.index).asfreq("MS")
+    """Limpia `serie` (ver `_limpiar_serie`) y corre el modelo `nombre`. None
+    si el modelo no converge (se trata como "no aplicable para este
+    grupo/fold", no como error fatal — el caller sigue con los demás
+    candidatos)."""
+    serie_fit, atipicos = _limpiar_serie(serie)
+    serie_fit = serie_fit.asfreq("MS")
     fn, _ = MODELOS[nombre]
     try:
         with warnings.catch_warnings():
@@ -329,16 +368,22 @@ def _ajustar_con_modelo(nombre: str, serie: pd.Series, horizonte: int) -> dict |
     return res
 
 
-def _elegir_modelo(serie: pd.Series, horizonte: int, backtest: int) -> tuple[str, dict]:
+def _elegir_modelo(serie: pd.Series, horizonte: int, backtest: int,
+                    permitir_sarima: bool = True) -> tuple[str, dict]:
     """Backtest de holdout: corre cada modelo aplicable sin los últimos
     `backtest` meses y mide MAPE contra los reales. Gana el de menor MAPE;
     "estacional_robusto" es el default si no hay backtest, la historia no
-    alcanza para un holdout, o ningún candidato converge."""
+    alcanza para un holdout, o ningún candidato converge.
+
+    La elegibilidad de cada candidato se decide por la historia TOTAL (`n`),
+    no por lo que queda tras separar el holdout de backtest — el backtest
+    igual entrena con menos meses (`serie.iloc[:-backtest]`), pero eso no
+    debería excluir a un modelo que sí es viable para la proyección final."""
     n = len(serie)
     if not backtest or n < MIN_MESES + backtest:
         return "estacional_robusto", {}
 
-    candidatos = _candidatos_aplicables(n - backtest)
+    candidatos = _candidatos_aplicables(n, permitir_sarima=permitir_sarima)
     mapes = {}
     for nombre in candidatos:
         res = _ajustar_con_modelo(nombre, serie.iloc[:-backtest], backtest)
@@ -435,15 +480,18 @@ def _mape(reales: np.ndarray, previstos: np.ndarray) -> float | None:
     return float(np.mean(np.abs(reales[mask] - previstos[mask]) / reales[mask]) * 100)
 
 
-def _agregar_filas(filas: list, grupo, serie: pd.Series, fc: pd.Series,
-                   sigma: float, precio_medio: float) -> None:
+def _agregar_reales(filas: list, grupo, serie: pd.Series, precio_medio: float) -> None:
     for mes, y in serie.items():
-        filas.append({"grupo": grupo, "mes": mes, "tipo": "real",
+        filas.append({"grupo": grupo, "mes": mes, "tipo": "real", "modelo": None,
                       "unidades": float(y),
                       "banda_inf": None, "banda_sup": None,
                       "valor": float(y) * precio_medio})
+
+
+def _agregar_forecast(filas: list, grupo, fc: pd.Series, sigma: float,
+                      precio_medio: float, modelo: str) -> None:
     for mes, y in fc.items():
-        filas.append({"grupo": grupo, "mes": mes, "tipo": "forecast",
+        filas.append({"grupo": grupo, "mes": mes, "tipo": "forecast", "modelo": modelo,
                       "unidades": float(y),
                       "banda_inf": max(float(y) - 1.96 * sigma, 0.0),
                       "banda_sup": float(y) + 1.96 * sigma,
@@ -501,8 +549,12 @@ def forecast_ventas(
                     de venta es de demanda o de abastecimiento.
 
     Returns:
-        DataFrame largo: grupo, mes, tipo ('real'/'forecast'), unidades,
-        banda_inf, banda_sup, valor (unidades × precio promedio del grupo).
+        DataFrame largo: grupo, mes, tipo ('real'/'forecast'), modelo (None
+        en filas "real"; en "forecast", el nombre del candidato — TODOS los
+        candidatos aplicables se ajustan a horizonte completo, no solo el
+        que ganó el backtest, para poder mostrar "otro modelo" en la UI sin
+        reajustar nada), unidades, banda_inf, banda_sup, valor (unidades ×
+        precio promedio del grupo).
         attrs: "mape" (dict por grupo, del modelo que ganó), "grupos_excluidos"
         (historia < MIN_MESES_KNN), "meses_atipicos", "metrica",
         "modelo_elegido" (dict por grupo — nombre del modelo o
@@ -555,41 +607,61 @@ def forecast_ventas(
             grupos_cortos.append((grupo, serie, precio_medio))
             continue
 
-        modelo_elegido, mapes_modelo = _elegir_modelo(serie, horizonte, backtest)
+        permitir_sarima = nivel not in NIVELES_SIN_SARIMA
+        modelo_elegido, mapes_modelo = _elegir_modelo(
+            serie, horizonte, backtest, permitir_sarima=permitir_sarima)
         if mapes_modelo:
             mape_por_modelo[str(grupo)] = mapes_modelo
             mapes[str(grupo)] = mapes_modelo.get(modelo_elegido)
 
-        resultado = _ajustar_con_modelo(modelo_elegido, serie, horizonte)
-        if resultado is None:
+        # Se ajustan a horizonte completo TODOS los candidatos aplicables
+        # (no solo el ganador): permite que la UI ofrezca "ver otro modelo"
+        # sin re-ajustar nada — el ganador sigue siendo el único que se usa
+        # en vistas agregadas (tabla "todos los grupos", reporte HTML).
+        candidatos = _candidatos_aplicables(n, permitir_sarima=permitir_sarima)
+        _agregar_reales(filas, grupo, serie, precio_medio)
+
+        resultados_por_modelo = {}
+        for candidato in candidatos:
+            resultado_c = _ajustar_con_modelo(candidato, serie, horizonte)
+            if resultado_c is None:
+                continue
+            resultados_por_modelo[candidato] = resultado_c
+            _agregar_forecast(filas, grupo, resultado_c["forecast"],
+                              resultado_c["sigma"], precio_medio, candidato)
+
+        if modelo_elegido not in resultados_por_modelo:
             # "estacional_robusto" es determinístico y nunca falla; si el
             # ganador del backtest no converge sobre la serie completa
             # (raro, pero posible en el borde de un gate), se cae a él.
             modelo_elegido = "estacional_robusto"
-            resultado = _ajustar_con_modelo(modelo_elegido, serie, horizonte)
+            if modelo_elegido not in resultados_por_modelo:
+                resultado_c = _ajustar_con_modelo(modelo_elegido, serie, horizonte)
+                resultados_por_modelo[modelo_elegido] = resultado_c
+                _agregar_forecast(filas, grupo, resultado_c["forecast"],
+                                  resultado_c["sigma"], precio_medio, modelo_elegido)
         modelos_elegidos[str(grupo)] = modelo_elegido
 
-        meses_at = [m.strftime("%Y-%m") for m in serie.index[resultado["atipicos"]]]
+        resultado_elegido = resultados_por_modelo[modelo_elegido]
+        meses_at = [m.strftime("%Y-%m") for m in serie.index[resultado_elegido["atipicos"]]]
         if meses_at:
             atipicos_all[str(grupo)] = meses_at
 
         # Perfil (índice estacional + tendencia) para donar a grupos con
         # historia corta, sea cual sea el modelo que haya ganado acá.
-        y_fit_full, _ = _winsorizar(serie.values.astype(float))
-        perfiles_donantes[str(grupo)] = _perfil_estacional_tendencia(
-            pd.Series(y_fit_full, index=serie.index))
-
-        _agregar_filas(filas, grupo, serie, resultado["forecast"],
-                       resultado["sigma"], precio_medio)
+        serie_fit_full, _ = _limpiar_serie(serie)
+        perfiles_donantes[str(grupo)] = _perfil_estacional_tendencia(serie_fit_full)
 
     for grupo, serie, precio_medio in grupos_cortos:
         resultado = _modelo_knn_prestado(serie, horizonte, perfiles_donantes)
         if resultado is None:
             excluidos.append(str(grupo))
             continue
-        modelos_elegidos[str(grupo)] = f"kNN (prestado de: {', '.join(resultado['donantes'])})"
-        _agregar_filas(filas, grupo, serie, resultado["forecast"],
-                       resultado["sigma"], precio_medio)
+        modelo_knn = f"kNN (prestado de: {', '.join(resultado['donantes'])})"
+        modelos_elegidos[str(grupo)] = modelo_knn
+        _agregar_reales(filas, grupo, serie, precio_medio)
+        _agregar_forecast(filas, grupo, resultado["forecast"],
+                          resultado["sigma"], precio_medio, modelo_knn)
 
     res = pd.DataFrame(filas)
     if not res.empty:

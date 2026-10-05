@@ -28,6 +28,24 @@ statsmodels==0.14.6
 # con historia corta (< 12 meses) que hoy quedan excluidos del forecast.
 scikit-learn==1.9.0
 
+# lightgbm: un solo modelo global (pooled) para los SKUs de demanda continua/
+# errática/lumpy (core/forecasting/pooled.py) — a esa escala (~17k SKUs) es
+# la única forma de tener un modelo con señal real sin entrenar miles de
+# series individuales. A propósito SIN mlforecast/statsforecast (Nixtla):
+# fuerzan pandas<3.0.0 y bajan el pandas==3.0.3 fijado más abajo — ver
+# core/forecasting/intermitente.py para el mismo motivo con Croston/TSB.
+lightgbm==4.7.0
+
+# prophet: forecast SEMANAL con feriados/eventos argentinos como regresor
+# explícito (core/forecasting/semanal.py) — pipeline separado del mensual.
+# El wheel de Windows trae el backend cmdstan precompilado (sin compilador
+# aparte); a diferencia de mlforecast/statsforecast, prophet en sí NO fuerza
+# un pandas viejo (confirmado con pip install --dry-run antes de instalar).
+prophet==1.4.0
+# holidays: calendario de feriados oficiales de Argentina para el forecast
+# semanal — dependencia de prophet, se fija explícita por si cambia.
+holidays==0.104
+
 # --- Lectura y escritura de Excel --------------------------
 # openpyxl: leer los archivos de entrada del ERP y generar reportes
 # Excel de salida con formato, colores y estilos.
