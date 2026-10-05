@@ -65,6 +65,7 @@ from core.comun import (  # noqa: E402
     precios_snapshot,
     snapshot_usado,
     adjuntar_rubros,
+    catalogo_articulos,
     listar_categorias,
     listar_fechas_valorizacion,
 )
@@ -383,6 +384,58 @@ def _ensamblar_sucursal(df_g: pd.DataFrame, df_val: pd.DataFrame,
     return res
 
 
+def _orden_categorias(conn) -> list[str]:
+    """Categorías de tipos_categoria en el orden del catálogo."""
+    return [
+        r[0] for r in conn.execute("""
+            SELECT categoria FROM tipos_categoria
+            GROUP BY categoria ORDER BY MIN(orden), categoria
+        """).fetchall()
+    ]
+
+
+def _componentes_sucursal(conn, desde: str, hasta: str,
+                          codigodepo: list[str] | str | None
+                          ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Neto por (codigodepo, codigo, categoria, es_merma, es_venta) en el rango,
+    y los pares (codigodepo, codigo) con conteo de inventario (tipo='INV',
+    siempre por tipo, nunca tipomov — mismo criterio que calcular_merma).
+    """
+    depos = None
+    if codigodepo:
+        depos = [codigodepo] if isinstance(codigodepo, str) else list(codigodepo)
+    filtro_depo = "AND codigodepo IN (SELECT unnest($depos))" if depos else ""
+    params = {"desde": desde, "hasta": hasta}
+    if depos:
+        params["depos"] = depos
+
+    df_g = conn.execute(f"""
+        WITH rango AS (
+            SELECT codigodepo, codigo, tipo, SUM(diferencia) AS neto_unidades
+            FROM movimientos
+            WHERE fecha >= $desde::DATE AND fecha <= $hasta::DATE
+              {filtro_depo}
+            GROUP BY 1, 2, 3
+        )
+        SELECT r.codigodepo, r.codigo,
+               COALESCE(t.categoria, '(sin categoría)') AS categoria,
+               COALESCE(t.es_merma, FALSE)              AS es_merma,
+               COALESCE(t.es_venta, FALSE)              AS es_venta,
+               SUM(r.neto_unidades)                     AS neto_unidades
+        FROM rango r
+        LEFT JOIN tipos_categoria t ON r.tipo = t.tipo
+        GROUP BY 1, 2, 3, 4, 5
+    """, params).df()
+
+    df_inv = conn.execute(f"""
+        SELECT DISTINCT codigodepo, codigo FROM movimientos
+        WHERE tipo = 'INV' AND fecha >= $desde::DATE AND fecha <= $hasta::DATE
+          {filtro_depo}
+    """, params).df()
+    return df_g, df_inv
+
+
 def merma_por_sucursal(
     proyecto: str,
     fecha_desde: str,
@@ -417,54 +470,16 @@ def merma_por_sucursal(
     desde = str(pd.to_datetime(fecha_desde).date())
     hasta = str(pd.to_datetime(fecha_hasta).date())
 
-    depos = None
-    if codigodepo:
-        depos = [codigodepo] if isinstance(codigodepo, str) else list(codigodepo)
-    filtro_depo = "AND codigodepo IN (SELECT unnest($depos))" if depos else ""
-    params = {"desde": desde, "hasta": hasta}
-    if depos:
-        params["depos"] = depos
-
     conn = conectar(proyecto)
     try:
-        df_g = conn.execute(f"""
-            WITH rango AS (
-                SELECT codigodepo, codigo, tipo, SUM(diferencia) AS neto_unidades
-                FROM movimientos
-                WHERE fecha >= $desde::DATE AND fecha <= $hasta::DATE
-                  {filtro_depo}
-                GROUP BY 1, 2, 3
-            )
-            SELECT r.codigodepo, r.codigo,
-                   COALESCE(t.categoria, '(sin categoría)') AS categoria,
-                   COALESCE(t.es_merma, FALSE)              AS es_merma,
-                   COALESCE(t.es_venta, FALSE)              AS es_venta,
-                   SUM(r.neto_unidades)                     AS neto_unidades
-            FROM rango r
-            LEFT JOIN tipos_categoria t ON r.tipo = t.tipo
-            GROUP BY 1, 2, 3, 4, 5
-        """, params).df()
-
+        df_g, df_inv = _componentes_sucursal(conn, desde, hasta, codigodepo)
         df_val = precios_snapshot(conn, fecha_valorizacion)
         fv_usada = snapshot_usado(conn, fecha_valorizacion)
 
         df_dep = conn.execute(
             "SELECT codigodepo, nombre, es_logistica FROM depositos"
         ).df()
-        cats_orden = [
-            r[0] for r in conn.execute("""
-                SELECT categoria FROM tipos_categoria
-                GROUP BY categoria ORDER BY MIN(orden), categoria
-            """).fetchall()
-        ]
-
-        # SKUs contados por sucursal: igual criterio que calcular_merma,
-        # siempre por tipo='INV' (nunca tipomov).
-        df_inv = conn.execute(f"""
-            SELECT DISTINCT codigodepo, codigo FROM movimientos
-            WHERE tipo = 'INV' AND fecha >= $desde::DATE AND fecha <= $hasta::DATE
-              {filtro_depo}
-        """, params).df()
+        cats_orden = _orden_categorias(conn)
     finally:
         conn.close()
 
@@ -475,6 +490,161 @@ def merma_por_sucursal(
     res = _ensamblar_sucursal(df_g, df_val, df_dep, cats_orden, df_inv, modo_valorizacion)
     res.attrs["fecha_valorizacion"] = fv_usada
     return res
+
+
+# ---------------------------------------------------------------------------
+# Matriz nivel × sucursal (export a Excel)
+# ---------------------------------------------------------------------------
+
+NIVELES_MATRIZ = ("rubro", "gran_super_rubro", "marca", "codigo")
+TOTAL_MATRIZ = "Total"
+
+
+def merma_matriz_sucursal(
+    proyecto: str,
+    fecha_desde: str,
+    fecha_hasta: str,
+    nivel: str,
+    codigodepo: list[str] | str | None = None,
+    codigos: list[str] | None = None,
+    modo_valorizacion: str = "costo",
+    fecha_valorizacion: str | None = None,
+) -> pd.DataFrame:
+    """
+    Por cada valor de `nivel` (rubro, gran super rubro, marca o SKU) y cada
+    sucursal: diferencia de cada categoría es_merma (Inventario, Ajustes...)
+    en unidades y $, SKUs inventariados (tipo='INV') y venta del período en
+    unidades y $. Más un bloque "Total" con todas las sucursales juntas, y
+    los SKUs activos del catálogo (flag del ERP) por fila, que no dependen
+    de la sucursal y van en attrs.
+
+    Mismo signo que calcular_merma: las categorías es_merma van negadas
+    (faltante positivo, sobrante negativo), así que su suma es la merma
+    neta. La venta va en positivo.
+
+    Args:
+        nivel:      uno de NIVELES_MATRIZ ("codigo" = una fila por SKU).
+        codigodepo: sucursal, lista, o None = todas.
+        codigos:    SKUs a incluir (filtros de catálogo de la UI). None = todos.
+
+    Returns:
+        DataFrame largo: nivel_valor, codigodepo, metrica, valor. codigodepo
+        vale TOTAL_MATRIZ en el bloque total. Solo trae las combinaciones con
+        datos; el que arma el ancho completa con 0.
+        attrs: nivel, metricas (en orden), sucursales (codigodepo en orden,
+        sin el total), fecha_valorizacion, descripciones (codigo -> texto,
+        solo con nivel="codigo"), categorias_merma (en orden), skus_activos
+        (nivel_valor -> SKUs con activo=True en el catálogo, respetando
+        `codigos`).
+    """
+    if nivel not in NIVELES_MATRIZ:
+        raise ValueError(f"nivel debe ser uno de {NIVELES_MATRIZ}, no '{nivel}'")
+    validar_modo_valorizacion(modo_valorizacion, MODOS_VALORIZACION_MERMA)
+    desde = str(pd.to_datetime(fecha_desde).date())
+    hasta = str(pd.to_datetime(fecha_hasta).date())
+    if desde > hasta:
+        raise ValueError(f"fecha_desde ({desde}) no puede ser posterior a fecha_hasta ({hasta})")
+
+    conn = conectar(proyecto)
+    try:
+        df_g, df_inv = _componentes_sucursal(conn, desde, hasta, codigodepo)
+        df_val = precios_snapshot(conn, fecha_valorizacion)
+        fv_usada = snapshot_usado(conn, fecha_valorizacion)
+        cats_merma = [
+            r[0] for r in conn.execute("""
+                SELECT categoria FROM tipos_categoria WHERE es_merma
+                GROUP BY categoria ORDER BY MIN(orden), categoria
+            """).fetchall()
+        ]
+    finally:
+        conn.close()
+    cat = catalogo_articulos(proyecto)
+
+    if codigos is not None:
+        df_g = df_g[df_g["codigo"].isin(set(codigos))]
+        df_inv = df_inv[df_inv["codigo"].isin(set(codigos))]
+
+    metricas = ([x for c in cats_merma for x in (f"{c} u", f"{c} $")]
+                + ["SKUs inv.", "Venta u", "Venta $"])
+    if depos_sel := ([codigodepo] if isinstance(codigodepo, str) else list(codigodepo or [])):
+        sucursales = sorted(depos_sel)
+    else:
+        sucursales = sorted(df_g["codigodepo"].unique())
+    attrs = dict(nivel=nivel, metricas=metricas, sucursales=sucursales,
+                 fecha_valorizacion=fv_usada, descripciones={},
+                 categorias_merma=cats_merma, skus_activos={})
+
+    if df_g.empty:
+        vacio = pd.DataFrame(columns=["nivel_valor", "codigodepo", "metrica", "valor"])
+        vacio.attrs.update(attrs)
+        return vacio
+
+    # Nivel de cada SKU (sin clasificar si el catálogo no lo tiene)
+    if nivel == "codigo":
+        mapa = pd.Series(df_g["codigo"].unique(), index=df_g["codigo"].unique())
+        attrs["descripciones"] = (cat.drop_duplicates("codigo")
+                                  .set_index("codigo")["descripcion"].to_dict())
+    else:
+        mapa = cat.drop_duplicates("codigo").set_index("codigo")[nivel]
+
+    def _nivel(df):
+        df = df.copy()
+        df["nivel_valor"] = df["codigo"].map(mapa).fillna("Sin clasificar")
+        return df
+
+    df_g = _nivel(df_g)
+    df_inv = _nivel(df_inv)
+    df_g["unit"] = precio_unitario_fila(
+        df_g["codigo"], modo_valorizacion, df_val, es_venta=df_g["es_venta"])
+    df_g["valor"] = df_g["neto_unidades"] * df_g["unit"]
+
+    # Bloque total: mismas filas con la sucursal reemplazada por TOTAL_MATRIZ
+    df_g = pd.concat([df_g, df_g.assign(codigodepo=TOTAL_MATRIZ)], ignore_index=True)
+    df_inv = pd.concat([df_inv, df_inv.assign(codigodepo=TOTAL_MATRIZ)], ignore_index=True)
+
+    claves = ["nivel_valor", "codigodepo"]
+    partes = []
+
+    m = df_g[df_g["es_merma"]]
+    if not m.empty:
+        g = m.groupby(claves + ["categoria"])[["neto_unidades", "valor"]].sum()
+        g = -g   # signo de merma: faltante positivo
+        for col, sufijo in (("neto_unidades", "u"), ("valor", "$")):
+            p = g[col].reset_index()
+            p["metrica"] = p["categoria"] + f" {sufijo}"
+            partes.append(p.drop(columns="categoria").rename(columns={col: "valor"}))
+
+    # nunique por (nivel, sucursal): en el total, un SKU contado en dos
+    # sucursales cuenta una sola vez.
+    si = df_inv.groupby(claves)["codigo"].nunique().rename("valor").reset_index()
+    si["metrica"] = "SKUs inv."
+    partes.append(si)
+
+    v = df_g[df_g["es_venta"]]
+    if not v.empty:
+        gv = -v.groupby(claves)[["neto_unidades", "valor"]].sum()
+        for col, nombre in (("neto_unidades", "Venta u"), ("valor", "Venta $")):
+            p = gv[col].rename("valor").reset_index()
+            p["metrica"] = nombre
+            partes.append(p)
+
+    largo = pd.concat(partes, ignore_index=True)[
+        ["nivel_valor", "codigodepo", "metrica", "valor"]]
+    # Fuera las filas en 0 (p. ej. SKUs que solo tuvieron remitos): un grupo
+    # sin ninguna métrica distinta de 0 no aparece en la matriz.
+    largo = largo[largo["valor"] != 0].reset_index(drop=True)
+
+    # SKUs activos según el flag `activo` del ERP (estricto: NA no cuenta),
+    # por valor de nivel. No depende de la sucursal: va una sola vez por
+    # fila, para usarlo de denominador del % contado de cada sucursal.
+    cat_act = cat[cat["activo"] == True].drop_duplicates("codigo")  # noqa: E712
+    if codigos is not None:
+        cat_act = cat_act[cat_act["codigo"].isin(set(codigos))]
+    niv_act = (cat_act["codigo"] if nivel == "codigo"
+               else cat_act[nivel].fillna("Sin clasificar"))
+    attrs["skus_activos"] = niv_act.value_counts().to_dict()
+    largo.attrs.update(attrs)
+    return largo
 
 
 def merma_por_sucursal_dinamica(

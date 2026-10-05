@@ -373,3 +373,90 @@ def svg_ranking_horizontal(items: list[dict], ancho: int = 690,
     return (f'<svg viewBox="0 0 {ancho} {alto}" width="100%" '
             f'style="max-width:{ancho}px" xmlns="http://www.w3.org/2000/svg" '
             f'font-family="Segoe UI, Arial, sans-serif">{"".join(cuerpo)}</svg>')
+
+
+_MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct",
+                 "nov", "dic"]
+
+
+def svg_serie_stock(fechas: list, stock: list[float], marcas: list[dict] | None = None,
+                    ancho: int = 690, alto: int = 230) -> str:
+    """
+    Stock diario de UN SKU como escalón, con eje de fechas (una etiqueta por
+    mes), tramos en quiebre sombreados y marcas de movimientos.
+
+    Args:
+        fechas: días (date/Timestamp), uno por punto, en orden.
+        stock:  nivel de cada día.
+        marcas: [{"fecha", "stock", "color", "etiqueta", "texto": opcional}] —
+                inventarios, ajustes, etc. `texto` se escribe al lado de la marca.
+    """
+    if not fechas:
+        return ""
+    marcas = marcas or []
+    izq, der, arriba, abajo = 46, 12, 22, 44
+    alto_util, ancho_util = alto - arriba - abajo, ancho - izq - der
+    lo, hi, ticks = _escala(min(stock), max(stock))
+    n = len(fechas)
+    f0 = fechas[0]
+
+    def x_de(f):
+        return izq + ancho_util * ((f - f0).days / max(n - 1, 1))
+
+    def y_de(v):
+        return arriba + alto_util * (1 - (v - lo) / (hi - lo or 1))
+
+    out = []
+    for m in ticks:
+        y = y_de(m)
+        out.append(f'<line x1="{izq}" y1="{y:.1f}" x2="{ancho - der}" y2="{y:.1f}" '
+                   f'stroke="{_LINEA}" stroke-width="{1 if m else 1.4}"/>')
+        out.append(f'<text x="{izq - 6}" y="{y + 3:.1f}" font-size="8.5" fill="{_GRIS}" '
+                   f'text-anchor="end">{_abreviar(m)}</text>')
+    # etiquetas de mes en el primer día de cada mes
+    for i, f in enumerate(fechas):
+        if f.day == 1 or (i == 0 and f.day <= 10):
+            x = x_de(f)
+            etq = f"{_MESES_CORTOS[f.month - 1]} {str(f.year)[2:]}"
+            out.append(f'<line x1="{x:.1f}" y1="{arriba}" x2="{x:.1f}" '
+                       f'y2="{alto - abajo}" stroke="{_LINEA}" stroke-width="0.6"/>')
+            out.append(f'<text x="{x + 2:.1f}" y="{alto - abajo + 12}" font-size="8.5" '
+                       f'fill="{_GRIS}">{etq}</text>')
+    # quiebres sombreados
+    ini = None
+    for i, v in enumerate(stock + [1]):
+        if v <= 0 and ini is None:
+            ini = i
+        elif v > 0 and ini is not None:
+            x0, x1 = x_de(fechas[ini]), x_de(fechas[min(i, n - 1)])
+            out.append(f'<rect x="{x0:.1f}" y="{arriba}" width="{max(x1 - x0, 1.2):.1f}" '
+                       f'height="{alto_util}" fill="#e74c3c" opacity="0.13"/>')
+            ini = None
+    # escalón
+    d = [f"M{x_de(fechas[0]):.1f},{y_de(stock[0]):.1f}"]
+    for i in range(1, n):
+        if stock[i] != stock[i - 1]:
+            x = x_de(fechas[i])
+            d.append(f"L{x:.1f},{y_de(stock[i - 1]):.1f} L{x:.1f},{y_de(stock[i]):.1f}")
+    d.append(f"L{x_de(fechas[-1]):.1f},{y_de(stock[-1]):.1f}")
+    out.append(f'<path d="{" ".join(d)}" fill="none" stroke="var(--azul)" '
+               f'stroke-width="1.8" stroke-linejoin="round"/>')
+    # marcas
+    leyenda, vistos = [], set()
+    for m in marcas:
+        x, y = x_de(m["fecha"]), y_de(m["stock"])
+        out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.6" fill="white" '
+                   f'stroke="{m["color"]}" stroke-width="2"/>')
+        if m.get("texto"):
+            out.append(f'<text x="{x + 5:.1f}" y="{y - 5:.1f}" font-size="7.5" '
+                       f'fill="{m["color"]}">{escape(str(m["texto"]))}</text>')
+        if m["etiqueta"] not in vistos:
+            vistos.add(m["etiqueta"])
+            leyenda.append({"nombre": m["etiqueta"], "color": m["color"]})
+    leyenda = [{"nombre": "Stock estimado", "color": "var(--azul)", "tipo": "linea"}] + leyenda
+    leyenda_svg, filas = _leyenda(leyenda, izq, alto - 8, ancho_max=ancho_util)
+    out.append(leyenda_svg)
+    alto_total = alto + (filas - 1) * 14
+    return (f'<svg viewBox="0 0 {ancho} {alto_total}" width="100%" '
+            f'style="max-width:{ancho}px" xmlns="http://www.w3.org/2000/svg" '
+            f'font-family="Segoe UI, Arial, sans-serif">{"".join(out)}</svg>')

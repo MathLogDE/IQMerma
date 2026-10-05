@@ -34,12 +34,13 @@ import pandas as pd
 from core.comun import conectar, adjuntar_rubros, catalogo_articulos, MESES
 
 # Tipos de movimiento que se marcan sobre la curva para explicar los saltos:
-# remitos (reposición), inventario físico, ajustes de merma y transformaciones
-# de SKU — mismos cuatro tipos que TIPOS_MARCA_SUC (más abajo), pero con su
-# propia paleta: acá compiten visualmente con la curva de un solo SKU, no con
-# el agregado de toda una sucursal.
+# remitos (reposición), diferencias de camión, inventario físico, ajustes de
+# merma y transformaciones de SKU — mismos tipos que TIPOS_MARCA_SUC (más
+# abajo), pero con su propia paleta: acá compiten visualmente con la curva de
+# un solo SKU, no con el agregado de toda una sucursal.
 TIPOS_MARCA = {
     "REM": {"etiqueta": "Remito", "color": "#748ffc", "simbolo": "x"},
+    "MD":  {"etiqueta": "Dif. de camión (MD)", "color": "#4dabf7", "simbolo": "asterisk-open"},
     "INV": {"etiqueta": "Inventario físico", "color": "#e64980", "simbolo": "x-open"},
     "CS":  {"etiqueta": "Ajuste (merma)", "color": "#ffa94d", "simbolo": "x-open"},
     "TR":  {"etiqueta": "Transformación", "color": "#e599f7", "simbolo": "diamond-open"},
@@ -70,15 +71,17 @@ def serie_stock(
         DataFrame (función escalón): codigodepo, codigo, descripcion, rubro,
         fecha, delta (movimiento del día), delta_rem / delta_aju (la parte del
         día que aportaron remitos y ajustes, por `tipomov`, para marcarlos
-        sobre la curva), delta_inv / delta_cs / delta_tr (el subconjunto de
-        delta_aju que es específicamente inventario físico, ajuste de merma o
-        transformación, por `tipo` — más fino que delta_aju para marcar
-        distinto cada uno), movs_rem / movs_inv / movs_cs / movs_tr (CUÁNTOS
+        sobre la curva), delta_md / delta_inv / delta_cs / delta_tr (el
+        subconjunto de delta_rem o delta_aju que es específicamente diferencia
+        de camión, inventario físico, ajuste de merma o transformación, por
+        `tipo` — más fino que delta_rem/delta_aju para marcar distinto cada
+        uno), movs_rem / movs_md / movs_inv / movs_cs / movs_tr (CUÁNTOS
         movimientos de cada tipo hubo ese día, sin importar si su diferencia
-        sumó 0 — un conteo de remitos, inventario/ajuste/transformación en
-        neto no distingue "no hubo movimiento" de "hubo uno que no varió el
-        stock" — p. ej. un inventario físico contado sin faltantes: se sigue
-        marcando el día aunque delta_inv sea 0), stock
+        sumó 0 — un conteo de remitos, diferencia de camión,
+        inventario/ajuste/transformación en neto no distingue "no hubo
+        movimiento" de "hubo uno que no varió el stock" — p. ej. un
+        inventario físico contado sin faltantes: se sigue marcando el día
+        aunque delta_inv sea 0), stock
         (nivel resultante), vigencia_dias (cuántos días se mantiene ese nivel
         hasta el próximo movimiento o el fin del rango).
         attrs: fecha_stock, desde, hasta, sucursales.
@@ -135,6 +138,8 @@ def serie_stock(
                            AS delta_rem,
                        COALESCE(SUM(m.diferencia) FILTER (WHERE m.tipomov = 'AJU'), 0)::DOUBLE
                            AS delta_aju,
+                       COALESCE(SUM(m.diferencia) FILTER (WHERE m.tipo = 'MD'), 0)::DOUBLE
+                           AS delta_md,
                        COALESCE(SUM(m.diferencia) FILTER (WHERE m.tipo = 'INV'), 0)::DOUBLE
                            AS delta_inv,
                        COALESCE(SUM(m.diferencia) FILTER (WHERE m.tipo = 'CS'), 0)::DOUBLE
@@ -142,6 +147,7 @@ def serie_stock(
                        COALESCE(SUM(m.diferencia) FILTER (WHERE m.tipo = 'TR'), 0)::DOUBLE
                            AS delta_tr,
                        COUNT(*) FILTER (WHERE m.tipomov = 'REM')::INTEGER AS movs_rem,
+                       COUNT(*) FILTER (WHERE m.tipo = 'MD')::INTEGER AS movs_md,
                        COUNT(*) FILTER (WHERE m.tipo = 'INV')::INTEGER AS movs_inv,
                        COUNT(*) FILTER (WHERE m.tipo = 'CS')::INTEGER AS movs_cs,
                        COUNT(*) FILTER (WHERE m.tipo = 'TR')::INTEGER AS movs_tr
@@ -175,8 +181,8 @@ def serie_stock(
             ),
             acum AS (
                 SELECT codigodepo, codigo, fecha, delta, delta_rem, delta_aju,
-                       delta_inv, delta_cs, delta_tr,
-                       movs_rem, movs_inv, movs_cs, movs_tr,
+                       delta_md, delta_inv, delta_cs, delta_tr,
+                       movs_rem, movs_md, movs_inv, movs_cs, movs_tr,
                        SUM(delta) OVER (PARTITION BY codigodepo, codigo ORDER BY fecha
                                         ROWS UNBOUNDED PRECEDING) AS acumulado
                 FROM mov
@@ -201,8 +207,8 @@ def serie_stock(
             ),
             filas_mov AS (
                 SELECT a.codigodepo, a.codigo, a.fecha, a.delta, a.delta_rem, a.delta_aju,
-                       a.delta_inv, a.delta_cs, a.delta_tr,
-                       a.movs_rem, a.movs_inv, a.movs_cs, a.movs_tr,
+                       a.delta_md, a.delta_inv, a.delta_cs, a.delta_tr,
+                       a.movs_rem, a.movs_md, a.movs_inv, a.movs_cs, a.movs_tr,
                        COALESCE(s.stock_snap, 0) + a.acumulado - n.acum_fs AS stock
                 FROM acum a
                 JOIN niveles n ON a.codigodepo = n.codigodepo AND a.codigo = n.codigo
@@ -216,8 +222,8 @@ def serie_stock(
             filas_planas AS (
                 SELECT u.codigodepo, u.codigo, $desde::DATE AS fecha,
                        0.0 AS delta, 0.0 AS delta_rem, 0.0 AS delta_aju,
-                       0.0 AS delta_inv, 0.0 AS delta_cs, 0.0 AS delta_tr,
-                       0 AS movs_rem, 0 AS movs_inv, 0 AS movs_cs, 0 AS movs_tr,
+                       0.0 AS delta_md, 0.0 AS delta_inv, 0.0 AS delta_cs, 0.0 AS delta_tr,
+                       0 AS movs_rem, 0 AS movs_md, 0 AS movs_inv, 0 AS movs_cs, 0 AS movs_tr,
                        COALESCE(s.stock_snap, 0) + n.acum_desde_prev - n.acum_fs AS stock
                 FROM universo u
                 JOIN niveles n ON u.codigodepo = n.codigodepo AND u.codigo = n.codigo
@@ -245,9 +251,10 @@ def serie_stock(
 
     if df.empty:
         vacio = pd.DataFrame(columns=["codigodepo", "codigo", "fecha", "delta",
-                                      "delta_rem", "delta_aju", "delta_inv",
-                                      "delta_cs", "delta_tr", "movs_rem",
-                                      "movs_inv", "movs_cs", "movs_tr", "stock"])
+                                      "delta_rem", "delta_aju", "delta_md",
+                                      "delta_inv", "delta_cs", "delta_tr",
+                                      "movs_rem", "movs_md", "movs_inv",
+                                      "movs_cs", "movs_tr", "stock"])
         vacio.attrs.update(attrs)
         return vacio
 
@@ -264,8 +271,8 @@ def serie_stock(
 
     cols = ["codigodepo", "codigo", "descripcion", "rubro", "marca",
             "gran_super_rubro", "fecha", "delta", "delta_rem", "delta_aju",
-            "delta_inv", "delta_cs", "delta_tr", "movs_rem", "movs_inv",
-            "movs_cs", "movs_tr", "stock", "vigencia_dias"]
+            "delta_md", "delta_inv", "delta_cs", "delta_tr", "movs_rem",
+            "movs_md", "movs_inv", "movs_cs", "movs_tr", "stock", "vigencia_dias"]
     df = (df[cols].sort_values(["codigodepo", "codigo", "fecha"])
           .reset_index(drop=True))
     df.attrs.update(attrs)
@@ -491,8 +498,9 @@ def marcadores_movimiento(serie: pd.DataFrame,
     informa igual que ese día se contó (y no hubo diferencia).
 
     Args:
-        serie:   salida de serie_stock (necesita delta_rem / delta_inv /
-                delta_cs / delta_tr y movs_rem / movs_inv / movs_cs / movs_tr).
+        serie:   salida de serie_stock (necesita delta_rem / delta_md /
+                delta_inv / delta_cs / delta_tr y movs_rem / movs_md /
+                movs_inv / movs_cs / movs_tr).
         codigos: un SKU, una lista, o None para todos.
         tipos:   subconjunto de TIPOS_MARCA (default: todos).
 
@@ -512,11 +520,17 @@ def marcadores_movimiento(serie: pd.DataFrame,
     if s.empty:
         return vacio
 
+    # REM ("Remito") marca solo los remitos que no son diferencia de camión:
+    # MD se separa en su propio tipo, igual que INV/CS se separan dentro de AJU.
+    s = s.assign(delta_rem_otro=s["delta_rem"] - s["delta_md"],
+                 movs_rem_otro=s["movs_rem"] - s["movs_md"])
+
     partes = []
-    for tipo, col, col_n in (("REM", "delta_rem", "movs_rem"),
+    for tipo, col, col_n in (("REM", "delta_rem_otro", "movs_rem_otro"),
+                             ("MD",  "delta_md", "movs_md"),
                              ("INV", "delta_inv", "movs_inv"),
-                             ("CS", "delta_cs", "movs_cs"),
-                             ("TR", "delta_tr", "movs_tr")):
+                             ("CS",  "delta_cs", "movs_cs"),
+                             ("TR",  "delta_tr", "movs_tr")):
         if tipos and tipo not in tipos:
             continue
         d = s[s[col_n].fillna(0) > 0]

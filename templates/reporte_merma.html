@@ -12,11 +12,11 @@
 <div class="kpis">
     <div class="kpi"><div class="etiqueta">SKUs analizados</div><div class="valor">{{ kpi.skus | unidades }}</div>
         <div class="detalle">{{ kpi.skus_con_merma | unidades }} con merma</div></div>
-    <div class="kpi alerta"><div class="etiqueta">Merma total</div><div class="valor">{{ kpi.merma | pesos }}</div>
+    <div class="kpi {{ 'ok' if kpi.merma < 0 else 'alerta' }}"><div class="etiqueta">Merma total</div><div class="valor">{{ kpi.merma | pesos }}</div>
         <div class="detalle">{{ kpi.merma_u | unidades }} unidades</div></div>
     <div class="kpi"><div class="etiqueta">Venta del período</div><div class="valor">{{ kpi.venta | pesos }}</div>
         <div class="detalle">{{ kpi.venta_u | unidades }} unidades</div></div>
-    <div class="kpi alerta"><div class="etiqueta">% Merma s/ventas</div><div class="valor">{{ kpi.pct | pct }}</div></div>
+    <div class="kpi {{ 'ok' if kpi.pct is not none and kpi.pct < 0 else 'alerta' }}"><div class="etiqueta">% Merma s/ventas</div><div class="valor">{{ kpi.pct | pct }}</div></div>
     {% if kpi.pct_skus_contados is not none %}
     <div class="kpi"><div class="etiqueta">% SKUs contados</div><div class="valor">{{ kpi.pct_skus_contados | pct }}</div>
         <div class="detalle">{{ kpi.skus_inv | unidades }} de {{ kpi.skus_total | unidades }} SKUs</div></div>
@@ -30,19 +30,26 @@
         <thead><tr><th>Categoría</th>
             {% if vista in ('valorizado','ambos') %}<th class="num">Merma $</th>{% endif %}
             {% if vista in ('unidades','ambos') %}<th class="num">Unidades</th>{% endif %}
-            <th class="num">% del total</th><th class="barra-celda"></th></tr></thead>
+            </tr></thead>
         <tbody>
         {% for c in composicion %}
         <tr>
             <td>{{ c.nombre }}</td>
             {% if vista in ('valorizado','ambos') %}<td class="num {{ 'verde' if c.neg else 'rojo' }}">{{ c.valor | pesos }}</td>{% endif %}
             {% if vista in ('unidades','ambos') %}<td class="num">{{ c.unidades | unidades }}</td>{% endif %}
-            <td class="num">{{ c.share | pct }}</td>
-            <td class="barra-celda"><div class="barra {{ 'verde' if c.neg else '' }}" style="width: {{ c.share_w }}%"></div></td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
+    {% if kpi.pct_skus_contados is not none %}
+    <table>
+        <tbody><tr>
+            <td>SKUs con inventario (INV): <b>{{ kpi.skus_inv | unidades }}</b> de {{ kpi.skus_total | unidades }}</td>
+            <td class="num">{{ kpi.pct_skus_contados | pct }}</td>
+            <td class="barra-celda"><div class="barra venta" style="width: {{ [kpi.pct_skus_contados, 100] | min }}%"></div></td>
+        </tr></tbody>
+    </table>
+    {% endif %}
 </div>
 {% endif %}
 
