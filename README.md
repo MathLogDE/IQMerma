@@ -58,6 +58,10 @@ python -m streamlit run ui/app.py
 
 ## Guía de uso
 
+Qué es IQMerma, qué hace y qué no, decisiones de cálculo, seguridad y
+compliance de No Conformidades, y estado del proyecto: **[IQMERMA.md](IQMERMA.md)**
+(documento de referencia, se mantiene al día).
+
 Instalación, carga de datos y lectura de los análisis, paso a paso, en
 **[GUIA_USO.md](GUIA_USO.md)**. Detalle del refactor v2 en
 [MIGRACION_V2.md](MIGRACION_V2.md).
