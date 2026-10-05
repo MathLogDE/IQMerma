@@ -1,7 +1,8 @@
 # IQMerma — Documento de referencia
 
-> **Versión del documento:** 1.0 · **Fecha:** 2026-10-05 · **Base:** branch `visualizaciones`,
-> commit `d3c5e1d` + trabajo sin commitear (forecast fases 1–5, No Conformidades, calidad de datos).
+> **Versión del documento:** 1.1 · **Fecha:** 2026-10-05 · **Base:** branch `desarrollo-compliance`
+> (sale de `visualizaciones` @ `bbaf0f9`). La estrategia hacia ISO 9001 / Lean Six Sigma está en
+> [ESTRATEGIA_COMPLIANCE.md](ESTRATEGIA_COMPLIANCE.md).
 >
 > ⚠️ **Uso interno.** Este documento incluye datos reales del cliente (Yuriti S.A.), cifras
 > medidas, cuentas y rutas de la máquina. Revisalo antes de pasárselo a terceros. **Nunca**
@@ -250,6 +251,10 @@ Estado: ✅ en uso · 🧪 en prueba · 🔒 solo admin.
   - todavía no salió ningún mail real.
 - **La instancia cliente no tiene ingesta** ni la pestaña Configuración de NC, y no puede
   hacer backup de NC.
+- **No hace conteo móvil ni es un WMS, por decisión.** IQMerma es de solo lectura sobre el
+  inventario (ADR-1). El conteo móvil, si llega, va a ser una app separada con contrato de
+  datos (ADR-2). Un WMS no se construye (ADR-3). Ver
+  [ESTRATEGIA_COMPLIANCE.md](ESTRATEGIA_COMPLIANCE.md) §2.
 - **No es multi-tenant en un servidor.** Corre en una PC Windows del analista, y los
   clientes entran por un túnel.
 
@@ -346,6 +351,13 @@ movimiento.
   afuera.
 - **Avance de inventario:** "contado" significa que hubo al menos una línea INV en el rango
   (presencia, no neto). El denominador puede ser "movimientos" o "catálogo".
+  ⚠️ **Lectura de INV verificada en datos (2026-10-05):** el ERP genera líneas INV también
+  cuando el conteo coincide (`diferencia = 0`, con `ingreso = egreso = 0`), y ninguna línea
+  trae ingreso y egreso positivos a la vez. **La línea INV no contiene la cantidad contada
+  ni la teórica**, solo el delta del ajuste. Por eso "unidades contadas = SUM(ingreso)" en
+  `avance_conteo` en realidad suma los sobrantes ajustados: es un issue abierto
+  (ESTRATEGIA_COMPLIANCE §5.4). La IRA solo puede calcularse con tolerancia absoluta
+  (§4.1 de la estrategia).
 
 ### 5.7 Forecasting
 - **El nivel agregado tiene señal; el SKU individual casi siempre es ruido.** El mensual
@@ -592,11 +604,19 @@ cualquier estado salvo CERRADA* → ANULADA
 ## 9. Estado y pendientes
 
 **Al 2026-10-05:**
+- El trabajo pendiente quedó en **6 commits lógicos** en `visualizaciones`
+  (`0b30f1b`…`bbaf0f9`). Todavía **no están pusheados**.
 - **PRs abiertos sin mergear:**
   - #1, `fixes-v2` → main (refactor v2);
-  - #2, `visualizaciones` → `fixes-v2` (módulos de visualización).
-- Mucho trabajo **sin commitear** en `visualizaciones`: forecast fases 1–5, NC completo,
-  calidad de datos, matriz por sucursal, PDF y tests.
+  - #2, `visualizaciones` → `fixes-v2`.
+- Camino propuesto, pendiente de OK:
+  1. Push.
+  2. Mergear el PR #1 con merge commit (no squash).
+  3. Retargetear el PR #2 a `main` y actualizar su descripción.
+  4. **`/code-review` obligatorio** del PR #2.
+  5. Mergear el PR #2 con merge commit.
+- La branch de trabajo nueva es **`desarrollo-compliance`**. El roadmap está en
+  ESTRATEGIA_COMPLIANCE §7. La Fase 1 es KPIs de NC + IRA + objetivos de calidad.
 - `projects/cliente_x` es un duplicado de prueba; falta que el usuario confirme si se
   borra. `nombre_cliente` y `test` también son proyectos de prueba (a validar).
 
@@ -663,6 +683,7 @@ evaluación es cosmético.
 | **IQMERMA.md** (este) | El norte: qué es, qué hace, decisiones, seguridad, estado |
 | [README.md](README.md) | Stack, estructura y setup rápido |
 | [GUIA_USO.md](GUIA_USO.md) | Manual paso a paso: instalación, carga de datos, cómo leer cada página |
+| [ESTRATEGIA_COMPLIANCE.md](ESTRATEGIA_COMPLIANCE.md) | Hacia dónde va: ADRs (solo lectura, conteo móvil aparte, no WMS), brecha ISO 9001, LSS, generalización, minería, roadmap. Sin datos del cliente |
 | [MIGRACION_V2.md](MIGRACION_V2.md) | Histórico del refactor v1 → v2 y decisiones de negocio originales |
 | Docstrings de `core/**` | El detalle técnico de cada motor (fórmulas, parámetros, casos medidos) |
 | `tests/test_no_conformidades.py` | La especificación ejecutable del módulo NC |
@@ -675,3 +696,4 @@ evaluación es cosmético.
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-10-05 | 1.0 | Primera versión: funcionalidades, límites, decisiones de cálculo, seguridad y compliance de NC, entorno, estado |
+| 2026-10-05 | 1.1 | Enlace a ESTRATEGIA_COMPLIANCE.md; límite conteo móvil / WMS; lectura real de las líneas INV (sin cantidad contada); estado de commits, PRs y branch |
