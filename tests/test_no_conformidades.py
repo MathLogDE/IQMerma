@@ -66,6 +66,19 @@ class Base(unittest.TestCase):
                                  "fecha_compromiso": date(2026, 10, 10)}])
         return i
 
+    def cerrada_sucursal(self, i=None, verif=date(2099, 1, 1)):
+        """Acepta el descargo, implementa todas las acciones y cierra con la sucursal."""
+        i = i or self.respondida()
+        if nc.obtener(self.dir, i)["estado"] == "RESPONDIDA":
+            nc.aceptar_descargo(self.dir, AUDITOR, i)
+        for a in nc.acciones_con_implementacion(self.dir, i):
+            if a["implementacion"] is None:
+                nc.registrar_implementacion(self.dir, AUDITOR, i, a["id"], date(2026, 10, 1),
+                                            "Capacitación dada, planilla firmada")
+        nc.cerrar_con_sucursal(self.dir, AUDITOR, i, verif, "Merma del próximo inventario",
+                               "Se acordó revisar en la próxima visita")
+        return i
+
 
 class TestNumeracion(Base):
     def test_correlativo_por_sucursal_y_mes(self):
@@ -255,9 +268,12 @@ class TestCiclo(Base):
 
     def test_no_cierra_sin_verificacion_ni_mismo_usuario(self):
         i = self.respondida()
-        with self.assertRaises(nc.NCError):   # todavía no está EN_VERIFICACION
+        with self.assertRaises(nc.NCError):   # todavía no está cerrada con la sucursal
             nc.verificar_eficacia(self.dir, VERIF, i, date.today(), "EFICAZ", "ok")
         nc.aceptar_descargo(self.dir, AUDITOR, i)
+        with self.assertRaises(nc.NCError):   # aceptada, pero sin cerrar con la sucursal
+            nc.verificar_eficacia(self.dir, VERIF, i, date.today(), "EFICAZ", "ok")
+        self.cerrada_sucursal(i)
         mismo = nc.Actor("auditor", "x", frozenset({"nc_verificar"}))
         with self.assertRaises(nc.NCError):
             nc.verificar_eficacia(self.dir, mismo, i, date.today(), "EFICAZ", "ok")
@@ -270,16 +286,14 @@ class TestCiclo(Base):
         cfg = nc.cargar_config(self.dir)
         cfg["verificador_distinto"] = False
         nc.guardar_config(self.dir, cfg)
-        i = self.respondida()
-        nc.aceptar_descargo(self.dir, AUDITOR, i)
+        i = self.cerrada_sucursal()
         nc.verificar_eficacia(self.dir, ADMIN.__class__("auditor", "x", frozenset(nc.ROLES_NC)),
                               i, date.today(), "EFICAZ", "ok")
         ev = nc.eventos(self.dir, "nc", i)[-1]
         self.assertTrue(ev["datos"]["mismo_usuario_que_respondio"])
 
     def test_no_eficaz_crea_nc_vinculada(self):
-        i = self.respondida()
-        nc.aceptar_descargo(self.dir, AUDITOR, i)
+        i = self.cerrada_sucursal()
         nueva = nc.verificar_eficacia(self.dir, VERIF, i, date.today(), "NO_EFICAZ",
                                       "Se repite la diferencia")
         self.assertEqual(nc.obtener(self.dir, i)["estado"], "CERRADA_NO_EFICAZ")
@@ -297,6 +311,178 @@ class TestCiclo(Base):
             nc.anular(self.dir, ADMIN, i, "motivo", "")                     # sin aviso
         nc.anular(self.dir, ADMIN, i, "motivo", "avisado por mail")
         self.assertEqual(nc.obtener(self.dir, i)["estado"], "ANULADA")
+
+
+class TestCierreConSucursal(Base):
+    def test_aceptar_deja_en_implementacion(self):
+        i = self.respondida()
+        nc.aceptar_descargo(self.dir, AUDITOR, i)
+        self.assertEqual(nc.obtener(self.dir, i)["estado"], "ACEPTADA")
+        self.assertEqual(nc.eventos(self.dir, "nc", i)[-1]["estado_nuevo"], "ACEPTADA")
+
+    def test_no_cierra_sin_acciones_implementadas(self):
+        i = self.respondida()
+        nc.aceptar_descargo(self.dir, AUDITOR, i)
+        with self.assertRaises(nc.NCError) as e:
+            nc.cerrar_con_sucursal(self.dir, AUDITOR, i, date(2099, 1, 1), "criterio")
+        self.assertIn("Faltan implementar", str(e.exception))
+        self.assertEqual(nc.obtener(self.dir, i)["estado"], "ACEPTADA")
+
+    def test_validaciones_implementacion_y_cierre(self):
+        i = self.respondida()
+        nc.aceptar_descargo(self.dir, AUDITOR, i)
+        a = nc.acciones_con_implementacion(self.dir, i)[0]
+        with self.assertRaises(nc.NCError):   # sin rol nc_responder
+            nc.registrar_implementacion(self.dir, VERIF, i, a["id"], date(2026, 10, 1), "ok")
+        with self.assertRaises(nc.NCError):   # sin evidencia
+            nc.registrar_implementacion(self.dir, AUDITOR, i, a["id"], date(2026, 10, 1), " ")
+        with self.assertRaises(nc.NCError):   # futura
+            nc.registrar_implementacion(self.dir, AUDITOR, i, a["id"], date(2099, 1, 1), "ok")
+        with self.assertRaises(nc.NCError):   # anterior a la recepción
+            nc.registrar_implementacion(self.dir, AUDITOR, i, a["id"], date(2026, 9, 1), "ok")
+        nc.registrar_implementacion(self.dir, AUDITOR, i, a["id"], date(2026, 10, 1), "ok")
+        with self.assertRaises(nc.NCError):   # dos veces
+            nc.registrar_implementacion(self.dir, AUDITOR, i, a["id"], date(2026, 10, 2), "ok")
+        with self.assertRaises(nc.NCError):   # verificación hoy o antes
+            nc.cerrar_con_sucursal(self.dir, AUDITOR, i, date.today(), "criterio")
+        with self.assertRaises(nc.NCError):   # sin criterio
+            nc.cerrar_con_sucursal(self.dir, AUDITOR, i, date(2099, 1, 1), "  ")
+        with self.assertRaises(nc.NCError):   # sin rol nc_emitir
+            nc.cerrar_con_sucursal(self.dir, VERIF, i, date(2099, 1, 1), "criterio")
+
+    def test_implementacion_append_only(self):
+        i = self.respondida()
+        nc.aceptar_descargo(self.dir, AUDITOR, i)
+        a = nc.acciones_con_implementacion(self.dir, i)[0]
+        nc.registrar_implementacion(self.dir, AUDITOR, i, a["id"], date(2026, 10, 1), "ok")
+        conn = nc.conectar(self.dir)
+        with self.assertRaises(sqlite3.DatabaseError):
+            conn.execute("UPDATE nc_implementacion SET evidencia_txt = 'otra'")
+        with self.assertRaises(sqlite3.DatabaseError):
+            conn.execute("DELETE FROM nc_implementacion")
+        conn.close()
+
+    def test_acta_congelada_y_verificada(self):
+        i = self.respondida()
+        nc.aceptar_descargo(self.dir, AUDITOR, i)
+        a = nc.acciones_con_implementacion(self.dir, i)[0]
+        nc.registrar_implementacion(self.dir, AUDITOR, i, a["id"], date(2026, 10, 1),
+                                    "Planilla <firmada>", adjunto=("asistencia.pdf", b"PDF1"))
+        html = nc.cerrar_con_sucursal(self.dir, AUDITOR, i, date(2099, 1, 1),
+                                      "Merma < línea base", "Aclaración libre")
+        n = nc.obtener(self.dir, i)
+        c = nc.cierre(self.dir, i)
+        self.assertEqual(n["estado"], "CERRADA_SUCURSAL")
+        self.assertEqual(c["fecha_verificacion_programada"], "2099-01-01")
+        self.assertEqual(nc.acta_verificada(self.dir, i), html)
+        for texto in ("Se recontó", "Conteo apurado", "Mano de obra", "Capacitar",
+                      "Aclaración libre", "asistencia.pdf", "01/01/2099",
+                      "Planilla &lt;firmada&gt;", "Merma &lt; línea base",
+                      c["sha256_contenido"][:16]):
+            self.assertIn(texto, html)
+        ev = nc.eventos(self.dir, "nc", i)[-1]
+        self.assertEqual((ev["tipo"], ev["estado_nuevo"]), ("CERRADA_SUCURSAL", "CERRADA_SUCURSAL"))
+        self.assertEqual(ev["datos"]["sha256_html"], nc.sha256_bytes(html.encode("utf-8")))
+        self.assertEqual(nc.verificar_actas(self.dir), [])
+        self.assertTrue(nc.verificar_cadena(self.dir)[0])
+
+    def test_acta_alterada_se_bloquea(self):
+        i = self.cerrada_sucursal()
+        conn = nc.conectar(self.dir)
+        with self.assertRaises(sqlite3.DatabaseError):   # append-only por trigger
+            conn.execute("UPDATE nc_cierre SET html_acta = 'x'")
+        conn.execute("DROP TRIGGER nc_cierre_no_update")  # simula alteración por fuera
+        conn.execute("UPDATE nc_cierre SET html_acta = html_acta || ' '")
+        conn.close()
+        with self.assertRaises(nc.NCError):
+            nc.acta_verificada(self.dir, i)
+        self.assertEqual(len(nc.verificar_actas(self.dir)), 1)
+
+    def test_no_se_anula_cerrada_con_sucursal(self):
+        i = self.cerrada_sucursal()
+        with self.assertRaises(nc.NCError):
+            nc.anular(self.dir, ADMIN, i, "motivo", "avisado")
+        conn = nc.conectar(self.dir)
+        with self.assertRaises(sqlite3.DatabaseError):   # el trigger tampoco lo deja
+            conn.execute("UPDATE nc SET estado = 'ANULADA' WHERE id = ?", (i,))
+        conn.close()
+
+    def test_verificacion_cierra_para_el_sgc(self):
+        i = self.cerrada_sucursal()
+        nc.verificar_eficacia(self.dir, VERIF, i, date.today(), "EFICAZ", "Merma bajó")
+        self.assertEqual(nc.obtener(self.dir, i)["estado"], "CERRADA")
+        self.assertEqual(nc.eventos(self.dir, "nc", i)[-1]["estado_anterior"], "CERRADA_SUCURSAL")
+
+    def test_vencimientos_de_accion_y_verificacion(self):
+        i = self.respondida()
+        nc.aceptar_descargo(self.dir, AUDITOR, i)
+        fila = [r for r in nc.listar(self.dir, ahora=datetime(2026, 10, 15)) if r["id"] == i][0]
+        self.assertTrue(any("ACCIÓN VENCIDA · 5 d" in v for v in fila["vencimientos"]))
+        self.cerrada_sucursal(i, verif=date(2099, 1, 1))
+        fila = [r for r in nc.listar(self.dir, ahora=datetime(2099, 1, 11)) if r["id"] == i][0]
+        self.assertTrue(any("VERIFICACIÓN VENCIDA · 10 d" in v for v in fila["vencimientos"]))
+        fila = [r for r in nc.listar(self.dir, ahora=datetime(2098, 12, 22)) if r["id"] == i][0]
+        self.assertTrue(any("Verificación en 10 d" in v for v in fila["vencimientos"]))
+
+    def test_dias_y_criterio_sugeridos(self):
+        cfg = nc.cargar_config(self.dir)
+        self.assertEqual(nc.dias_verificacion(cfg, "ROJO"), 30)
+        cfg["tipos"]["ROJO"].pop("verificacion_dias")   # config vieja sin la clave
+        self.assertEqual(nc.dias_verificacion(cfg, "ROJO"), 30)
+        i = self.emitida(merma_linea_base=12345.0, linea_base_unidad="$")
+        self.assertIn("$ 12,345", nc.criterio_sugerido(nc.obtener(self.dir, i)))
+
+
+class TestMigracion(Base):
+    VIEJAS = {("BORRADOR", "EMITIDA"), ("EMITIDA", "ENVIADA"), ("ENVIADA", "RESPONDIDA"),
+              ("RESPONDIDA", "ENVIADA"), ("RESPONDIDA", "EN_VERIFICACION"),
+              ("EN_VERIFICACION", "CERRADA"), ("EN_VERIFICACION", "CERRADA_NO_EFICAZ"),
+              ("EMITIDA", "ANULADA"), ("ENVIADA", "ANULADA"), ("RESPONDIDA", "ANULADA"),
+              ("EN_VERIFICACION", "ANULADA")}
+
+    def _base_vieja(self):
+        """Una base v0: trigger de transiciones viejo y una NC aceptada en EN_VERIFICACION."""
+        i = self.respondida()
+        conn = nc.conectar(self.dir)
+        lista = ", ".join(f"'{a}>{b}'" for a, b in sorted(self.VIEJAS))
+        conn.execute("DROP TRIGGER nc_transicion")
+        conn.execute("CREATE TRIGGER nc_transicion BEFORE UPDATE OF estado ON nc"
+                     " WHEN NEW.estado IS NOT OLD.estado AND (OLD.estado || '>' || NEW.estado)"
+                     f" NOT IN ({lista}) BEGIN SELECT RAISE(ABORT, 'Transición'); END")
+        conn.execute("UPDATE nc SET estado = 'EN_VERIFICACION' WHERE id = ?", (i,))
+        conn.execute("PRAGMA user_version = 0")
+        conn.close()
+        return i
+
+    def _migraciones(self):
+        conn = sqlite3.connect(str(nc.ruta_db(self.dir)))
+        n = conn.execute("SELECT COUNT(*) FROM nc_eventos WHERE tipo = 'ESQUEMA_MIGRADO'"
+                         ).fetchone()[0]
+        conn.close()
+        return n
+
+    def test_migra_y_la_heredada_sigue_el_camino_nuevo(self):
+        i = self._base_vieja()
+        conn = nc.conectar(self.dir)            # migra
+        self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], nc.VERSION_ESQUEMA)
+        conn.close()
+        self.assertEqual(self._migraciones(), 1)
+        ev = [e for e in nc.eventos(self.dir, "sistema", 0) if e["tipo"] == "ESQUEMA_MIGRADO"][0]
+        self.assertEqual(ev["datos"]["nc_en_verificacion"], [i])
+        self.assertTrue(nc.verificar_cadena(self.dir)[0])
+        self.assertEqual(nc.obtener(self.dir, i)["estado"], "EN_VERIFICACION")  # fila intacta
+        nc.conectar(self.dir).close()           # segunda vez: no repite
+        self.assertEqual(self._migraciones(), 1)
+        self.cerrada_sucursal(i)                # EN_VERIFICACION → CERRADA_SUCURSAL
+        self.assertEqual(nc.obtener(self.dir, i)["estado"], "CERRADA_SUCURSAL")
+        nc.verificar_eficacia(self.dir, VERIF, i, date.today(), "EFICAZ", "ok")
+        self.assertTrue(nc.verificar_cadena(self.dir)[0])
+
+    def test_base_nueva_no_registra_migracion(self):
+        conn = nc.conectar(self.dir)
+        self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], nc.VERSION_ESQUEMA)
+        conn.close()
+        self.assertEqual(self._migraciones(), 0)
 
 
 class TestAdjuntosBackupObs(Base):
@@ -540,6 +726,56 @@ class TestMail(Base):
         self.assertEqual(nc_mail.password("x@gmail.com", archivo), "abcdefghijklmnop")
         self.assertNotIn("abcd", (self.dir / "nc_config.json").read_text(encoding="utf-8")
                          if (self.dir / "nc_config.json").exists() else "")
+
+
+class TestMailCierre(Base):
+    DEST = TestMail.DEST
+
+    def setUp(self):
+        super().setUp()
+        self.enviados = []
+
+    def _enviar(self, msg, todos):
+        self.enviados.append((msg, todos))
+
+    def test_envio_del_acta(self):
+        i = self.cerrada_sucursal()
+        b = nc_mail.componer_cierre(self.dir, i)
+        self.assertIn("01/01/2099", b["cuerpo"])
+        self.assertIn("Capacitar (implementada el 01/10/2026)", b["cuerpo"])
+        nc_mail.enviar_cierre(self.dir, AUDITOR, i, self.DEST, b["asunto"], b["cuerpo"],
+                              b["firma"], enviar=self._enviar,
+                              html_a_pdf=lambda h: b"%PDF-acta")
+        msg, todos = self.enviados[0]
+        self.assertEqual(msg["Subject"], "Cierre de la No conformidad N° 01 034 092026")
+        adj = [a for a in msg.iter_attachments()][0]
+        self.assertTrue(adj.get_filename().startswith("Acta de cierre NC"))
+        self.assertEqual(nc.obtener(self.dir, i)["estado"], "CERRADA_SUCURSAL")  # no cambia
+        self.assertEqual(nc.eventos(self.dir, "nc", i)[-1]["tipo"], "ACTA_CIERRE_ENVIADA")
+        self.assertEqual(nc.envios(self.dir, i)[-1]["resultado"], "OK")
+        pdf = [a for a in nc.adjuntos(self.dir, i) if a["etapa"] == "envio"][-1]
+        self.assertEqual(pdf["sha256"], nc.sha256_bytes(b"%PDF-acta"))
+
+    def test_sin_acta_no_se_envia(self):
+        i = self.respondida()
+        with self.assertRaises(nc.NCError):
+            nc_mail.componer_cierre(self.dir, i)
+        with self.assertRaises(nc.NCError):
+            nc_mail.enviar_cierre(self.dir, AUDITOR, i, self.DEST, "a", "c", "f",
+                                  enviar=self._enviar, html_a_pdf=lambda h: b"x")
+
+    def test_fallo_del_acta_queda_registrado(self):
+        i = self.cerrada_sucursal()
+
+        def falla(msg, todos):
+            raise ConnectionError("sin red")
+
+        b = nc_mail.componer_cierre(self.dir, i)
+        with self.assertRaises(nc.NCError):
+            nc_mail.enviar_cierre(self.dir, AUDITOR, i, self.DEST, b["asunto"], b["cuerpo"],
+                                  b["firma"], enviar=falla, html_a_pdf=lambda h: b"x")
+        self.assertEqual(nc.eventos(self.dir, "nc", i)[-1]["tipo"], "ENVIO_FALLIDO")
+        self.assertEqual(nc.obtener(self.dir, i)["estado"], "CERRADA_SUCURSAL")
 
 
 class TestContactos(Base):

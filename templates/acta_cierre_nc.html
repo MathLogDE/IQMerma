@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block estilos %}
+    .nc-cab { margin-bottom: 14px; font-size: 10pt; }
+    .nc-cab .fila { display: flex; gap: 6px; padding: 1px 0; }
+    .nc-cab .etq { font-weight: 600; min-width: 175px; }
+    .nc-cab .numero { font-family: "IBM Plex Mono", Consolas, monospace; font-size: 11.5pt;
+                      font-weight: 700; letter-spacing: 0.04em; }
+    .tipo { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+    .tipo .chip { width: 14px; height: 14px; border-radius: 50%;
+                  border: 1px solid var(--tinta); background: {{ tipo_color }}; }
+    .bloque { margin-bottom: 10px; }
+    .bloque h3 { font-size: 10pt; margin-bottom: 3px; }
+    .bloque p { text-align: justify; white-space: pre-line; }
+    table.acciones td, table.adjuntos td { font-size: 9pt; vertical-align: top; }
+    td.evidencia { white-space: pre-line; }
+    .fuera { color: var(--rojo, #c0392b); font-weight: 600; }
+    .verif { border: 1.5px solid var(--tinta); border-radius: 4px; padding: 8px 12px;
+             margin: 6px 0 4px; }
+    .verif p { margin: 2px 0; white-space: pre-line; }
+    .firma { display: flex; gap: 24px; margin-top: 34px; }
+    .firma div { flex: 1; border-top: 1px solid var(--tinta); padding-top: 3px;
+                 font-size: 8.5pt; color: var(--gris); text-align: center; }
+    .nota { font-size: 8.5pt; color: var(--gris); }
+    .cierre-firma { break-inside: avoid; page-break-inside: avoid; }
+    .huella { font-family: Consolas, monospace; font-size: 7.5pt; color: var(--gris);
+              margin-top: 10px; }
+{% endblock %}
+
+{% block metadatos %}{% endblock %}
+
+{% block cuerpo %}
+<div class="nc-cab">
+    <div class="fila"><span class="etq">No conformidad N°:</span>
+        <span class="numero">{{ numero_impreso }}</span></div>
+    <div class="fila"><span class="etq">Fecha de la NC:</span><span>{{ fecha_nc }}</span></div>
+    <div class="fila"><span class="etq">Recepción por la sucursal:</span><span>{{ recepcion }}</span></div>
+    <div class="fila"><span class="etq">Sucursal:</span>
+        <span>{{ nc.sucursal_nombre }} ({{ nc.codigodepo }})</span></div>
+    <div class="fila"><span class="etq">Área:</span><span>{{ nc.area }}</span></div>
+    <div class="fila"><span class="etq">Tipo:</span>
+        <span class="tipo"><span class="chip"></span>{{ nc.tipo }}</span></div>
+    <div class="fila"><span class="etq">Requisito del SOP:</span>
+        <span>Punto {{ nc.req_codigo }} — {{ nc.req_titulo }}
+        {% if nc.sop_version %}(versión {{ nc.sop_version }}){% endif %}</span></div>
+</div>
+
+<div class="seccion">
+    <h2>Desvío</h2>
+    <div class="bloque"><p>{{ nc.desvio_txt }}</p></div>
+</div>
+
+<div class="seccion">
+    <h2>Descargo aceptado</h2>
+    <div class="bloque">
+        <h3>Corrección inmediata (contención)</h3>
+        <p>{{ acta.respuesta.correccion }}</p>
+    </div>
+    <div class="bloque">
+        <h3>Causa raíz — categoría {{ acta.respuesta.categoria_6m }}</h3>
+        <p>{{ acta.respuesta.causa_raiz }}</p>
+    </div>
+    <p class="nota">Descargo N° {{ acta.respuesta.intento }}{% if acta.intentos_previos %}
+        ({{ acta.intentos_previos }} descargo{{ 's' if acta.intentos_previos != 1 }} anterior{{ 'es' if acta.intentos_previos != 1 }} observado{{ 's' if acta.intentos_previos != 1 }}){% endif %}
+        · aceptado el {{ aceptado_en }}{% if acta.aceptado_por %} por {{ acta.aceptado_por }}{% endif %}.</p>
+</div>
+
+<div class="seccion">
+    <h2>Acciones correctivas e implementación</h2>
+    <table class="acciones">
+        <thead><tr><th>#</th><th>Acción</th><th>Responsable</th><th>Compromiso</th>
+            <th>Implementada</th><th>Evidencia</th></tr></thead>
+        <tbody>
+        {% for a in acciones %}
+        <tr><td>{{ loop.index }}</td><td>{{ a.descripcion }}</td><td>{{ a.responsable }}</td>
+            <td>{{ a.compromiso_txt }}</td>
+            <td{% if a.fuera %} class="fuera"{% endif %}>{{ a.real_txt }}{% if a.fuera %} (fuera de compromiso){% endif %}</td>
+            <td class="evidencia">{{ a.evidencia }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if acta.aclaraciones %}
+<div class="seccion">
+    <h2>Aclaraciones de cierre</h2>
+    <div class="bloque"><p>{{ acta.aclaraciones }}</p></div>
+</div>
+{% endif %}
+
+{% if adjuntos %}
+<div class="seccion">
+    <h2>Adjuntos del descargo e implementación</h2>
+    <table class="adjuntos">
+        <thead><tr><th>#</th><th>Archivo</th><th>Fecha</th><th>Huella SHA-256</th></tr></thead>
+        <tbody>
+        {% for a in adjuntos %}
+        <tr><td>{{ loop.index }}</td><td>{{ a.nombre }}</td><td>{{ a.fecha_txt }}</td>
+            <td style="font-family:Consolas,monospace">{{ a.huella }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <p class="nota">Los archivos quedan archivados en el registro de la NC; la huella permite
+        comprobar que no fueron modificados.</p>
+</div>
+{% endif %}
+
+<div class="seccion">
+    <h2>Cierre y verificación de eficacia</h2>
+    <p>Con la implementación de las acciones correctivas detalladas, se da por <b>cerrado el
+        caso con la sucursal</b>. Conforme a ISO 9001 §10.2, la eficacia de las acciones se
+        verificará en forma posterior:</p>
+    <div class="verif">
+        <p><b>Fecha programada:</b> {{ fecha_verificacion }}</p>
+        <p><b>Criterio:</b> {{ acta.criterio_verificacion }}</p>
+        <p><b>Responsable:</b> auditoría interna (quien verifica no puede ser quien cargó el
+            descargo)</p>
+    </div>
+    <p class="nota">Si la verificación determina que las acciones no fueron eficaces, se
+        emitirá una nueva No Conformidad vinculada a la presente.</p>
+</div>
+
+<div class="cierre-firma">
+<p style="margin-top:18px;font-size:9pt">Cerrada por {{ acta.cerrada_por_nombre }} el {{ cerrada }}.
+    Conformidad de la sucursal:</p>
+<div class="firma">
+    <div>Firma</div>
+    <div>Aclaración</div>
+    <div>Fecha</div>
+</div>
+</div>
+
+<div class="huella">Acta de cierre de la NC {{ numero_impreso }} · huella del acta SHA-256 {{ huella }}
+    · huella de la NC {{ huella_nc }} · {{ cerrada }}</div>
+{% endblock %}

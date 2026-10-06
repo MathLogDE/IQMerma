@@ -71,6 +71,23 @@ MAIL_DEFAULT = {
         "Auditoría Interna de Stock\n"
         "Inventario Permanente — Río Shop"
     ),
+    # Acta de cierre con la sucursal (core/no_conformidades.cerrar_con_sucursal).
+    "asunto_cierre": "Cierre de la No conformidad N° {numero}",
+    "cuerpo_cierre": (
+        "{saludo}:\n\n"
+        "Se adjunta el acta de cierre de la No Conformidad N° {numero}, correspondiente a la "
+        "sucursal {sucursal}. Con la implementación de las acciones correctivas informadas, "
+        "el caso queda cerrado con la sucursal.\n\n"
+        "Acciones correctivas implementadas:\n"
+        "{acciones}\n\n"
+        "La eficacia de las acciones se verificará el {fecha_verificacion}, con el siguiente "
+        "criterio: {criterio_verificacion}\n"
+        "Si la verificación determina que no fueron eficaces, se emitirá una nueva No "
+        "Conformidad vinculada.\n\n"
+        "Se solicita devolver el acta firmada (firma, aclaración y fecha) dentro de las "
+        "{plazo_acuse} de recibido.\n\n"
+        "Quedamos a disposición ante cualquier consulta."
+    ),
     # Horas corridas para confirmar la recepción y devolver la NC firmada.
     "acuse_horas": 48,
     # Los destinatarios frecuentes viven en la agenda de contactos (core/nc_contactos.py).
@@ -90,6 +107,9 @@ MARCADORES = {
     "plazo_implementacion": "Plazo máximo de implementación con su fecha",
     "plazo_acuse": "Horas para confirmar recepción y devolver firmada (Configuración → Mail)",
     "firmante": "Nombre de quien generó la NC (responsable solicitante)",
+    "acciones": "Acta de cierre: acciones correctivas con su fecha de implementación",
+    "fecha_verificacion": "Acta de cierre: fecha programada de la verificación de eficacia",
+    "criterio_verificacion": "Acta de cierre: criterio de la verificación de eficacia",
 }
 
 # Pie fijo, en letra chica, al final de todos los mails.
@@ -221,6 +241,19 @@ def contexto(n: dict, cfg: dict, ahora: datetime) -> dict:
     }
 
 
+def contexto_cierre(proyecto, n: dict, cfg: dict, ahora: datetime) -> dict:
+    """Contexto de la NC más los datos del acta de cierre."""
+    c = nc.cierre(proyecto, n["id"])
+    if c is None:
+        raise nc.NCError("La NC no tiene acta de cierre.")
+    acciones = "\n".join(
+        f"- {a['descripcion']} (implementada el {_fmt(a['implementacion']['fecha_real'])})"
+        for a in nc.acciones_con_implementacion(proyecto, n["id"]) if a["implementacion"])
+    return {**contexto(n, cfg, ahora), "acciones": acciones,
+            "fecha_verificacion": _fmt(c["fecha_verificacion_programada"]),
+            "criterio_verificacion": c["criterio_verificacion"]}
+
+
 def rellenar(plantilla: str, ctx: dict) -> str:
     return (plantilla or "").format_map(_Seguro(ctx))
 
@@ -243,6 +276,23 @@ def componer(proyecto, nc_id: int, ahora: datetime | None = None) -> dict:
             "redactado": ahora.isoformat(timespec="minutes")}
 
 
+def componer_cierre(proyecto, nc_id: int, ahora: datetime | None = None) -> dict:
+    """Borrador del mail del acta de cierre, con los contactos de la sucursal."""
+    from core import nc_contactos
+    ahora = ahora or datetime.now()
+    cfg = nc.cargar_config(proyecto)
+    mcfg = config_mail(cfg)
+    n = nc.obtener(proyecto, nc_id)
+    if n["estado"] not in nc.ESTADOS_CON_ACTA:
+        raise nc.NCError("La NC todavía no se cerró con la sucursal: no hay acta para enviar.")
+    ctx = contexto_cierre(proyecto, n, cfg, ahora)
+    return {"destinatarios": nc_contactos.sugeridos(proyecto, n["codigodepo"]),
+            "asunto": rellenar(mcfg["asunto_cierre"], ctx),
+            "cuerpo": rellenar(mcfg["cuerpo_cierre"], ctx),
+            "firma": rellenar(mcfg["firma"], ctx), "referencia": None,
+            "redactado": ahora.isoformat(timespec="minutes")}
+
+
 def separar(destinatarios: list[dict]) -> tuple[list[str], list[str], list[str]]:
     """(para, cc, cco) sin repetidos; un mail marcado en varias columnas va en la primera."""
     para, cc, cco, vistos = [], [], [], set()
@@ -256,10 +306,11 @@ def separar(destinatarios: list[dict]) -> tuple[list[str], list[str], list[str]]
 
 
 def previsualizar(proyecto, nc_id: int, asunto: str, cuerpo: str, firma: str,
-                  ahora: datetime | None = None) -> dict:
+                  ahora: datetime | None = None, cierre: bool = False) -> dict:
     ahora = ahora or datetime.now()
     cfg = nc.cargar_config(proyecto)
-    ctx = contexto(nc.obtener(proyecto, nc_id), cfg, ahora)
+    n = nc.obtener(proyecto, nc_id)
+    ctx = contexto_cierre(proyecto, n, cfg, ahora) if cierre else contexto(n, cfg, ahora)
     return {"asunto": rellenar(asunto, ctx),
             "texto": rellenar(cuerpo, ctx).rstrip() + "\n\n" + rellenar(firma, ctx).strip()
             + "\n\n" + PIE}
@@ -345,22 +396,13 @@ def probar_conexion(mcfg: dict, pwd: str) -> None:
 # Envío
 # ---------------------------------------------------------------------------
 
-ESTADOS_REENVIO = ("ENVIADA", "RESPONDIDA", "EN_VERIFICACION")
+ESTADOS_REENVIO = nc.ESTADOS_REENVIO
 
 
-def enviar_nc(proyecto, actor: nc.Actor, nc_id: int, destinatarios: list[dict], asunto: str,
-              cuerpo: str, firma: str, enviar=None, html_a_pdf=None,
-              pwd: str | None = None, guardar_nuevos: bool = False,
-              referencia: dict | None = None) -> dict:
-    """Envía la NC por mail y registra el resultado. `enviar` y `html_a_pdf` se
-    inyectan en los tests. Devuelve {'plazos', 'message_id', 'reenvio'}."""
+def _validar_envio(actor: nc.Actor, mcfg: dict, destinatarios: list[dict], asunto: str,
+                   pwd: str | None, enviar) -> tuple[list[str], list[str], list[str], str | None]:
     if not actor.tiene("nc_emitir"):
         raise nc.NCError(f"El usuario {actor.username} no tiene el rol nc_emitir.")
-    cfg = nc.cargar_config(proyecto)
-    mcfg = config_mail(cfg)
-    n = nc.obtener(proyecto, nc_id)
-    if n["estado"] not in ("EMITIDA",) + ESTADOS_REENVIO:
-        raise nc.NCError(f"La NC está en {n['estado']}: no se puede enviar.")
     para, cc, cco = separar(destinatarios)
     if not para:
         raise nc.NCError("Marcá al menos un destinatario en «Para».")
@@ -372,6 +414,50 @@ def enviar_nc(proyecto, actor: nc.Actor, nc_id: int, destinatarios: list[dict], 
     pwd = pwd or password(mcfg["remitente"])
     if enviar is None and not pwd:
         raise nc.NCError("Falta la contraseña de aplicación de Gmail (Configuración → Mail).")
+    return para, cc, cco, pwd
+
+
+def _despachar(proyecto, actor: nc.Actor, nc_id: int, mcfg: dict, pwd, msg, envio: dict,
+               destinos: list[str], enviar) -> None:
+    """Manda el mensaje; si falla, registra el intento y lo informa."""
+    try:
+        if enviar is None:
+            enviar_smtp(mcfg, pwd, msg, destinos)
+        else:
+            enviar(msg, destinos)
+    except Exception as e:  # noqa: BLE001 — se registra y se informa
+        nc.registrar_envio_fallido(proyecto, actor, nc_id, envio, f"{type(e).__name__}: {e}")
+        raise nc.NCError("No se pudo enviar el mail. " + explicar_error(e)) from e
+
+
+def _agenda(proyecto, actor: nc.Actor, destinatarios: list[dict], usados: list[str],
+            guardar_nuevos: bool) -> list:
+    """Agenda: no es evidencia, un error acá no debe ocultar que el mail salió."""
+    nuevos = []
+    try:
+        from core import nc_contactos
+        if guardar_nuevos:
+            nuevos = nc_contactos.agregar_nuevos(proyecto, actor, destinatarios)
+        nc_contactos.registrar_uso(proyecto, usados)
+    except Exception:  # noqa: BLE001
+        pass
+    return nuevos
+
+
+def enviar_nc(proyecto, actor: nc.Actor, nc_id: int, destinatarios: list[dict], asunto: str,
+              cuerpo: str, firma: str, enviar=None, html_a_pdf=None,
+              pwd: str | None = None, guardar_nuevos: bool = False,
+              referencia: dict | None = None) -> dict:
+    """Envía la NC por mail y registra el resultado. `enviar` y `html_a_pdf` se
+    inyectan en los tests. Devuelve {'plazos', 'message_id', 'reenvio'}."""
+    cfg = nc.cargar_config(proyecto)
+    mcfg = config_mail(cfg)
+    n = nc.obtener(proyecto, nc_id)
+    if not actor.tiene("nc_emitir"):
+        raise nc.NCError(f"El usuario {actor.username} no tiene el rol nc_emitir.")
+    if n["estado"] not in ("EMITIDA",) + ESTADOS_REENVIO:
+        raise nc.NCError(f"La NC está en {n['estado']}: no se puede enviar.")
+    para, cc, cco, pwd = _validar_envio(actor, mcfg, destinatarios, asunto, pwd, enviar)
 
     ahora = datetime.now()
     if referencia and n["estado"] == "EMITIDA" and fechas_clave(n, cfg, ahora) != referencia:
@@ -392,24 +478,38 @@ def enviar_nc(proyecto, actor: nc.Actor, nc_id: int, destinatarios: list[dict], 
     envio = {"canal": "mail", "remitente": mcfg["remitente"], "para": para, "cc": cc,
              "cco": cco, "asunto": asunto_f, "cuerpo": texto,
              "message_id": msg["Message-ID"]}
-    try:
-        if enviar is None:
-            enviar_smtp(mcfg, pwd, msg, para + cc + cco)
-        else:
-            enviar(msg, para + cc + cco)
-    except Exception as e:  # noqa: BLE001 — se registra y se informa
-        nc.registrar_envio_fallido(proyecto, actor, nc_id, envio, f"{type(e).__name__}: {e}")
-        raise nc.NCError("No se pudo enviar el mail. " + explicar_error(e)) from e
+    _despachar(proyecto, actor, nc_id, mcfg, pwd, msg, envio, para + cc + cco, enviar)
     plazos = nc.registrar_envio_mail(proyecto, actor, nc_id, envio, (nombre_pdf, pdf_bytes),
                                      ahora)
-    # Agenda: no es evidencia, un error acá no debe ocultar que el mail salió.
-    nuevos = []
-    try:
-        from core import nc_contactos
-        if guardar_nuevos:
-            nuevos = nc_contactos.agregar_nuevos(proyecto, actor, destinatarios)
-        nc_contactos.registrar_uso(proyecto, para + cc + cco)
-    except Exception:  # noqa: BLE001
-        pass
+    nuevos = _agenda(proyecto, actor, destinatarios, para + cc + cco, guardar_nuevos)
     return {"plazos": plazos, "message_id": msg["Message-ID"],
             "reenvio": n["estado"] != "EMITIDA", "contactos_nuevos": nuevos}
+
+
+def enviar_cierre(proyecto, actor: nc.Actor, nc_id: int, destinatarios: list[dict],
+                  asunto: str, cuerpo: str, firma: str, enviar=None, html_a_pdf=None,
+                  pwd: str | None = None, guardar_nuevos: bool = False) -> dict:
+    """Envía el acta de cierre (PDF del HTML congelado y verificado). No cambia el estado."""
+    cfg = nc.cargar_config(proyecto)
+    mcfg = config_mail(cfg)
+    n = nc.obtener(proyecto, nc_id)
+    if n["estado"] not in nc.ESTADOS_CON_ACTA:
+        raise nc.NCError("La NC todavía no se cerró con la sucursal: no hay acta para enviar.")
+    para, cc, cco, pwd = _validar_envio(actor, mcfg, destinatarios, asunto, pwd, enviar)
+    ctx = contexto_cierre(proyecto, n, cfg, datetime.now())
+    asunto_f = rellenar(asunto, ctx)
+    cuerpo_f = rellenar(cuerpo, ctx).rstrip() + "\n\n"
+    texto = cuerpo_f + rellenar(firma, ctx).strip()
+    html = nc.acta_verificada(proyecto, nc_id)
+    if html_a_pdf is None:
+        from core.pdf import html_a_pdf
+    pdf_bytes = html_a_pdf(html)
+    nombre_pdf = f"Acta de cierre NC {n['numero']}.pdf"
+    msg = construir_mensaje(mcfg, para, cc, asunto_f, texto, len(cuerpo_f), nombre_pdf, pdf_bytes)
+    envio = {"canal": "mail", "remitente": mcfg["remitente"], "para": para, "cc": cc,
+             "cco": cco, "asunto": asunto_f, "cuerpo": texto,
+             "message_id": msg["Message-ID"]}
+    _despachar(proyecto, actor, nc_id, mcfg, pwd, msg, envio, para + cc + cco, enviar)
+    nc.registrar_envio_cierre(proyecto, actor, nc_id, envio, (nombre_pdf, pdf_bytes))
+    nuevos = _agenda(proyecto, actor, destinatarios, para + cc + cco, guardar_nuevos)
+    return {"message_id": msg["Message-ID"], "contactos_nuevos": nuevos}

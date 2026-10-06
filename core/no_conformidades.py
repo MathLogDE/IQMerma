@@ -7,10 +7,19 @@ ingestas lo lockean, mientras que las NC necesitan escrituras de varios usuarios
 WAL + busy_timeout; el archivo tiene que vivir en disco local (nunca en SMB).
 
 Ciclo de una NC:
-    BORRADOR → EMITIDA → ENVIADA → RESPONDIDA → EN_VERIFICACION → CERRADA
-                            ↑           │                       ↘ CERRADA_NO_EFICAZ (+ NC nueva)
+    BORRADOR → EMITIDA → ENVIADA → RESPONDIDA → ACEPTADA → CERRADA_SUCURSAL → CERRADA
+                            ↑           │                                   ↘ CERRADA_NO_EFICAZ (+ NC nueva)
                             └───────────┘ descargo observado
-    cualquiera salvo CERRADA* → ANULADA
+    EMITIDA / ENVIADA / RESPONDIDA / ACEPTADA → ANULADA
+
+  - ACEPTADA: descargo aceptado, acciones correctivas en implementación.
+  - CERRADA_SUCURSAL: todas las acciones implementadas; el caso se cierra con la
+    sucursal con un acta (HTML congelado con hash, exportable y enviable por mail).
+    La verificación de eficacia (ISO 9001 §10.2.1 d) queda PROGRAMADA (fecha y
+    criterio en `nc_cierre`) y se registra después: no bloquea el cierre con la
+    sucursal, pero la NC no está cerrada para el SGC hasta verificarla.
+  - EN_VERIFICACION: estado heredado (antes de 2026-10). Equivale a ACEPTADA; las
+    NC que quedaron ahí siguen por el camino nuevo.
 
 Auditabilidad:
   - Número `NNDDDMMAAAA` (orden por sucursal y mes, depósito, mes, año), asignado
@@ -45,19 +54,31 @@ import holidays
 
 ROLES_NC = ("nc_emitir", "nc_responder", "nc_verificar", "nc_anular")
 
-ESTADOS = ("BORRADOR", "EMITIDA", "ENVIADA", "RESPONDIDA", "EN_VERIFICACION",
-           "CERRADA", "CERRADA_NO_EFICAZ", "ANULADA")
-ESTADOS_ABIERTOS = ("EMITIDA", "ENVIADA", "RESPONDIDA", "EN_VERIFICACION")
+ESTADOS = ("BORRADOR", "EMITIDA", "ENVIADA", "RESPONDIDA", "ACEPTADA", "EN_VERIFICACION",
+           "CERRADA_SUCURSAL", "CERRADA", "CERRADA_NO_EFICAZ", "ANULADA")
+# Descargo aceptado, acciones en implementación (EN_VERIFICACION es el nombre heredado).
+ESTADOS_ACEPTADA = ("ACEPTADA", "EN_VERIFICACION")
+ESTADOS_ABIERTOS = ("EMITIDA", "ENVIADA", "RESPONDIDA") + ESTADOS_ACEPTADA
+# Cerrada con la sucursal, falta verificar la eficacia.
+ESTADOS_VERIFICACION_PENDIENTE = ("CERRADA_SUCURSAL",)
 ESTADOS_FINALES = ("CERRADA", "CERRADA_NO_EFICAZ", "ANULADA")
+# Ya notificada: admite reenviar la NC por mail.
+ESTADOS_REENVIO = ESTADOS_ABIERTOS[1:] + ESTADOS_VERIFICACION_PENDIENTE
+# Tienen acta de cierre (se puede descargar y enviar).
+ESTADOS_CON_ACTA = ESTADOS_VERIFICACION_PENDIENTE + ("CERRADA", "CERRADA_NO_EFICAZ")
 
 # Transiciones válidas (también las controla un trigger, como segunda barrera).
 TRANSICIONES = {
     ("BORRADOR", "EMITIDA"), ("EMITIDA", "ENVIADA"), ("ENVIADA", "RESPONDIDA"),
-    ("RESPONDIDA", "ENVIADA"), ("RESPONDIDA", "EN_VERIFICACION"),
-    ("EN_VERIFICACION", "CERRADA"), ("EN_VERIFICACION", "CERRADA_NO_EFICAZ"),
+    ("RESPONDIDA", "ENVIADA"), ("RESPONDIDA", "ACEPTADA"),
+    ("ACEPTADA", "CERRADA_SUCURSAL"), ("EN_VERIFICACION", "CERRADA_SUCURSAL"),
+    ("CERRADA_SUCURSAL", "CERRADA"), ("CERRADA_SUCURSAL", "CERRADA_NO_EFICAZ"),
     ("EMITIDA", "ANULADA"), ("ENVIADA", "ANULADA"), ("RESPONDIDA", "ANULADA"),
-    ("EN_VERIFICACION", "ANULADA"),
+    ("ACEPTADA", "ANULADA"), ("EN_VERIFICACION", "ANULADA"),
 }
+
+# Versión del esquema del SQLite de NC (PRAGMA user_version), ver `_migrar`.
+VERSION_ESQUEMA = 1
 
 CATEGORIAS_6M = ["Método", "Mano de obra", "Material", "Máquina", "Medición", "Medio"]
 
@@ -65,16 +86,18 @@ CONFIG_DEFAULT = {
     # Severidad de menor a mayor. Plazos contados desde la recepción (ENVIADA).
     #   contencion_horas: horas corridas; contencion_con_descargo: vence con el descargo
     #   implementacion_max_dias: días corridos; None = la propone la sucursal
+    #   verificacion_dias: días corridos desde el cierre con la sucursal que se sugieren
+    #                      para verificar la eficacia (editable al cerrar)
     "tipos": {
         "AMARILLO": {"severidad": 1, "color": "#f1c40f", "contencion_horas": None,
                      "contencion_con_descargo": False, "descargo_dias_habiles": 10,
-                     "implementacion_max_dias": None},
+                     "implementacion_max_dias": None, "verificacion_dias": 90},
         "NARANJA":  {"severidad": 2, "color": "#e67e22", "contencion_horas": None,
                      "contencion_con_descargo": True, "descargo_dias_habiles": 5,
-                     "implementacion_max_dias": 60},
+                     "implementacion_max_dias": 60, "verificacion_dias": 60},
         "ROJO":     {"severidad": 3, "color": "#e74c3c", "contencion_horas": 48,
                      "contencion_con_descargo": False, "descargo_dias_habiles": 3,
-                     "implementacion_max_dias": 30},
+                     "implementacion_max_dias": 30, "verificacion_dias": 30},
     },
     "areas": ["CONTROL DE INVENTARIO", "RECEPCIÓN DE MERCADERÍA", "DISTRIBUCIÓN",
               "FACTURACIÓN"],
@@ -188,6 +211,15 @@ BEGIN SELECT RAISE(ABORT, '{tabla} es de solo agregado: no se borra'); END;
 
 _TRANSICIONES_SQL = ", ".join(f"'{a}>{b}'" for a, b in sorted(TRANSICIONES))
 _CAMBIA_CONGELADA = " OR ".join(f"NEW.{c} IS NOT OLD.{c}" for c in _CONGELADAS)
+
+# Aparte del SCHEMA porque `_migrar` lo recrea cuando cambian las transiciones
+# (CREATE ... IF NOT EXISTS no actualiza un trigger existente).
+_TRIGGER_TRANSICION = f"""
+CREATE TRIGGER IF NOT EXISTS nc_transicion BEFORE UPDATE OF estado ON nc
+WHEN NEW.estado IS NOT OLD.estado
+ AND (OLD.estado || '>' || NEW.estado) NOT IN ({_TRANSICIONES_SQL})
+BEGIN SELECT RAISE(ABORT, 'Transición de estado no permitida'); END;
+"""
 
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS sop_versiones (
@@ -360,7 +392,34 @@ CREATE TABLE IF NOT EXISTS nc_envios (
     enviado_en    TEXT NOT NULL
 );
 
--- Cadena de eventos: entidad = 'nc' | 'obs' | 'sop'
+-- Implementación de cada acción correctiva del descargo aceptado (la reporta la
+-- sucursal y se transcribe). Las acciones son append-only: esto va aparte.
+CREATE TABLE IF NOT EXISTS nc_implementacion (
+    id             INTEGER PRIMARY KEY,
+    accion_id      INTEGER NOT NULL UNIQUE REFERENCES nc_acciones_correctivas(id),
+    fecha_real     TEXT NOT NULL,
+    evidencia_txt  TEXT NOT NULL,
+    adjunto_id     INTEGER REFERENCES nc_adjuntos(id),
+    registrada_por TEXT NOT NULL,
+    registrada_en  TEXT NOT NULL
+);
+
+-- Cierre con la sucursal: acta congelada + verificación de eficacia programada.
+CREATE TABLE IF NOT EXISTS nc_cierre (
+    id                             INTEGER PRIMARY KEY,
+    nc_id                          INTEGER NOT NULL UNIQUE REFERENCES nc(id),
+    respuesta_id                   INTEGER NOT NULL REFERENCES nc_respuesta(id),
+    aclaraciones                   TEXT,
+    fecha_verificacion_programada  TEXT NOT NULL,
+    criterio_verificacion          TEXT NOT NULL,
+    html_acta                      TEXT NOT NULL,
+    sha256_html                    TEXT NOT NULL,
+    sha256_contenido               TEXT NOT NULL,
+    cerrada_por                    TEXT NOT NULL,
+    cerrada_en                     TEXT NOT NULL
+);
+
+-- Cadena de eventos: entidad = 'nc' | 'obs' | 'sop' | 'sistema'
 CREATE TABLE IF NOT EXISTS nc_eventos (
     id               INTEGER PRIMARY KEY,
     entidad          TEXT NOT NULL,
@@ -383,6 +442,8 @@ CREATE INDEX IF NOT EXISTS idx_eventos_entidad ON nc_eventos (entidad, entidad_i
 {_trigger_inmutable("nc_adjuntos")}
 {_trigger_inmutable("observaciones")}
 {_trigger_inmutable("nc_envios")}
+{_trigger_inmutable("nc_implementacion")}
+{_trigger_inmutable("nc_cierre")}
 
 -- Contenido congelado después de emitir.
 CREATE TRIGGER IF NOT EXISTS nc_congelada BEFORE UPDATE ON nc
@@ -405,10 +466,7 @@ WHEN NEW.fecha_limite_descargo IS NOT OLD.fecha_limite_descargo
           OR (OLD.estado = 'RESPONDIDA' AND NEW.estado = 'ENVIADA'))
 BEGIN SELECT RAISE(ABORT, 'El plazo de descargo solo cambia al enviar o al observar el descargo'); END;
 
-CREATE TRIGGER IF NOT EXISTS nc_transicion BEFORE UPDATE OF estado ON nc
-WHEN NEW.estado IS NOT OLD.estado
- AND (OLD.estado || '>' || NEW.estado) NOT IN ({_TRANSICIONES_SQL})
-BEGIN SELECT RAISE(ABORT, 'Transición de estado no permitida'); END;
+{_TRIGGER_TRANSICION}
 
 CREATE TRIGGER IF NOT EXISTS nc_anexos_congelados_upd BEFORE UPDATE ON nc_anexos
 WHEN (SELECT estado FROM nc WHERE id = OLD.nc_id) <> 'BORRADOR'
@@ -455,7 +513,36 @@ def conectar(proyecto) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
+    if conn.execute("PRAGMA user_version").fetchone()[0] < VERSION_ESQUEMA:
+        _migrar(conn)
     return conn
+
+
+ACTOR_SISTEMA = Actor("sistema", "Migración de esquema")
+
+
+def _migrar(conn: sqlite3.Connection) -> None:
+    """Lleva una base existente a VERSION_ESQUEMA, dejando constancia en la cadena.
+
+    v1 (2026-10): cierre con la sucursal antes de verificar la eficacia. Recrea el
+    trigger de transiciones (ACEPTADA, CERRADA_SUCURSAL); EN_VERIFICACION queda como
+    estado heredado y sus filas no se tocan.
+    """
+    with _tx(conn):
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version >= VERSION_ESQUEMA:
+            return  # otra conexión ya migró
+        conn.execute("DROP TRIGGER IF EXISTS nc_transicion")
+        conn.execute(_TRIGGER_TRANSICION)
+        if conn.execute("SELECT 1 FROM nc_eventos LIMIT 1").fetchone():
+            _evento(conn, "sistema", 0, ACTOR_SISTEMA, "ESQUEMA_MIGRADO", None, None, {
+                "de": version, "a": VERSION_ESQUEMA,
+                "cambios": ["estados ACEPTADA y CERRADA_SUCURSAL; EN_VERIFICACION heredado",
+                            "tablas nc_implementacion y nc_cierre (append-only)",
+                            "trigger nc_transicion recreado"],
+                "nc_en_verificacion": [r[0] for r in conn.execute(
+                    "SELECT id FROM nc WHERE estado = 'EN_VERIFICACION' ORDER BY id")]})
+        conn.execute(f"PRAGMA user_version = {VERSION_ESQUEMA}")
 
 
 @contextmanager
@@ -643,9 +730,11 @@ def limite_implementacion(nc_row) -> date | None:
             + timedelta(days=nc_row["plazo_impl_max_dias"]))
 
 
-def vencimientos(nc_row, ahora: datetime | None = None, max_compromiso: str | None = None
-                 ) -> list[str]:
-    """Badges de texto para Seguimiento (sin colores: el color es la severidad)."""
+def vencimientos(nc_row, ahora: datetime | None = None, compromiso: str | None = None,
+                 verificacion: str | None = None) -> list[str]:
+    """Badges de texto para Seguimiento (sin colores: el color es la severidad).
+    `compromiso`: fecha compromiso más próxima entre las acciones sin implementar;
+    `verificacion`: fecha programada de la verificación de eficacia."""
     ahora = ahora or datetime.now()
     hoy = ahora.date()
     out = []
@@ -661,10 +750,18 @@ def vencimientos(nc_row, ahora: datetime | None = None, max_compromiso: str | No
                 out.append(f"⏰ DESCARGO VENCIDO · {(hoy - lim).days} d")
             else:
                 out.append(f"Descargo en {(lim - hoy).days} d")
-    if est == "EN_VERIFICACION" and max_compromiso:
-        lim = date.fromisoformat(max_compromiso)
+    if est in ESTADOS_ACEPTADA and compromiso:
+        lim = date.fromisoformat(compromiso)
         if hoy > lim:
             out.append(f"⏰ ACCIÓN VENCIDA · {(hoy - lim).days} d")
+        else:
+            out.append(f"Próxima acción en {(lim - hoy).days} d")
+    if est in ESTADOS_VERIFICACION_PENDIENTE and verificacion:
+        lim = date.fromisoformat(verificacion)
+        if hoy > lim:
+            out.append(f"⏰ VERIFICACIÓN VENCIDA · {(hoy - lim).days} d")
+        else:
+            out.append(f"Verificación en {(lim - hoy).days} d")
     return out
 
 
@@ -1107,7 +1204,7 @@ def registrar_envio_mail(proyecto, actor: Actor, nc_id: int, envio: dict,
             plazos, adj_id = _registrar_envio(conn, proyecto, actor, row, enviado, cfg,
                                               {"medio": "Correo electrónico", **resumen}, adjunto)
             eid = _insertar_envio(conn, nc_id, actor, envio, "OK", adj_id)
-        elif row["estado"] in ("ENVIADA", "RESPONDIDA", "EN_VERIFICACION"):
+        elif row["estado"] in ESTADOS_REENVIO:
             adj_id = _guardar_adjunto(conn, proyecto, actor, row, "envio", *adjunto)
             eid = _insertar_envio(conn, nc_id, actor, envio, "OK", adj_id)
             _evento(conn, "nc", nc_id, actor, "MAIL_REENVIADO", row["estado"], row["estado"],
@@ -1214,23 +1311,253 @@ def observar_descargo(proyecto, actor: Actor, nc_id: int, motivo: str,
 
 
 def aceptar_descargo(proyecto, actor: Actor, nc_id: int) -> None:
-    """El auditor acepta el descargo: queda esperando verificar la eficacia."""
+    """El auditor acepta el descargo: las acciones quedan en implementación (ACEPTADA)."""
     _exigir(actor, "nc_emitir")
     conn = conectar(proyecto)
     with _tx(conn):
         _estado(conn, nc_id, ("RESPONDIDA",))
         ultima = conn.execute("SELECT id, intento FROM nc_respuesta WHERE nc_id = ?"
                               " ORDER BY intento DESC LIMIT 1", (nc_id,)).fetchone()
-        conn.execute("UPDATE nc SET estado = 'EN_VERIFICACION' WHERE id = ?", (nc_id,))
+        conn.execute("UPDATE nc SET estado = 'ACEPTADA' WHERE id = ?", (nc_id,))
         _evento(conn, "nc", nc_id, actor, "DESCARGO_ACEPTADO", "RESPONDIDA",
-                "EN_VERIFICACION", {"respuesta_id": ultima["id"], "intento": ultima["intento"]})
+                "ACEPTADA", {"respuesta_id": ultima["id"], "intento": ultima["intento"]})
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Implementación de acciones y cierre con la sucursal
+# ---------------------------------------------------------------------------
+
+def dias_verificacion(cfg: dict, tipo: str) -> int:
+    """Días sugeridos entre el cierre con la sucursal y la verificación de eficacia."""
+    t = cfg.get("tipos", {}).get(tipo) or {}
+    return int(t.get("verificacion_dias")
+               or CONFIG_DEFAULT["tipos"].get(tipo, {}).get("verificacion_dias") or 60)
+
+
+def criterio_sugerido(nc_row) -> str:
+    """Texto inicial del criterio de verificación, con la línea base si la NC la tiene."""
+    base = nc_row["merma_linea_base"]
+    if base is None:
+        return ("Repetir el control que originó la NC y confirmar que el desvío no se "
+                "repite.")
+    unidad = nc_row["linea_base_unidad"] or ""
+    valor = f"$ {base:,.0f}" if unidad == "$" else f"{base:,.2f} {unidad}".strip()
+    fuente = f" ({nc_row['linea_base_fuente']})" if nc_row["linea_base_fuente"] else ""
+    return (f"Merma de la sucursal en el próximo inventario comparada con la línea base "
+            f"{valor}{fuente}: tiene que ser menor.")
+
+
+def _respuesta_aceptada(conn, nc_id: int) -> sqlite3.Row:
+    r = conn.execute("SELECT * FROM nc_respuesta WHERE nc_id = ? ORDER BY intento DESC"
+                     " LIMIT 1", (nc_id,)).fetchone()
+    if r is None:
+        raise NCError("La NC no tiene descargo cargado.")
+    return r
+
+
+def _acciones_impl(conn, respuesta_id: int) -> list[dict]:
+    out = []
+    for a in conn.execute("SELECT * FROM nc_acciones_correctivas WHERE respuesta_id = ?"
+                          " ORDER BY id", (respuesta_id,)):
+        d = dict(a)
+        imp = conn.execute("SELECT * FROM nc_implementacion WHERE accion_id = ?",
+                           (a["id"],)).fetchone()
+        d["implementacion"] = dict(imp) if imp else None
+        out.append(d)
+    return out
+
+
+def acciones_con_implementacion(proyecto, nc_id: int) -> list[dict]:
+    """Acciones del descargo aceptado (último intento) con su implementación o None."""
+    conn = conectar(proyecto)
+    try:
+        return _acciones_impl(conn, _respuesta_aceptada(conn, nc_id)["id"])
+    finally:
+        conn.close()
+
+
+def registrar_implementacion(proyecto, actor: Actor, nc_id: int, accion_id: int,
+                             fecha_real: date, evidencia_txt: str,
+                             adjunto: tuple[str, bytes] | None = None) -> None:
+    """La sucursal informa que implementó una acción correctiva (se transcribe)."""
+    _exigir(actor, "nc_responder")
+    if not (evidencia_txt or "").strip():
+        raise NCError("Describí la evidencia de la implementación.")
+    if fecha_real > date.today():
+        raise NCError("La fecha de implementación no puede ser futura.")
+    conn = conectar(proyecto)
+    with _tx(conn):
+        row = _estado(conn, nc_id, ESTADOS_ACEPTADA)
+        resp = _respuesta_aceptada(conn, nc_id)
+        accion = conn.execute("SELECT * FROM nc_acciones_correctivas WHERE id = ?",
+                              (accion_id,)).fetchone()
+        if accion is None or accion["respuesta_id"] != resp["id"]:
+            raise NCError("La acción no pertenece al descargo aceptado de esta NC.")
+        if row["recepcion_ts"] and fecha_real < datetime.fromisoformat(
+                row["recepcion_ts"]).date():
+            raise NCError("La implementación no puede ser anterior a la recepción de la NC.")
+        if conn.execute("SELECT 1 FROM nc_implementacion WHERE accion_id = ?",
+                        (accion_id,)).fetchone():
+            raise NCError("Esa acción ya tiene la implementación registrada.")
+        adj_id = None
+        if adjunto:
+            adj_id = _guardar_adjunto(conn, proyecto, actor, row, "respuesta", *adjunto,
+                                      respuesta_id=resp["id"])
+        conn.execute("INSERT INTO nc_implementacion (accion_id, fecha_real, evidencia_txt,"
+                     " adjunto_id, registrada_por, registrada_en) VALUES (?,?,?,?,?,?)",
+                     (accion_id, fecha_real.isoformat(), evidencia_txt.strip(), adj_id,
+                      actor.username, _ahora()))
+        _evento(conn, "nc", nc_id, actor, "ACCION_IMPLEMENTADA", row["estado"], row["estado"],
+                {"accion_id": accion_id, "fecha_real": fecha_real.isoformat(),
+                 "fuera_de_compromiso": fecha_real.isoformat() > accion["fecha_compromiso"],
+                 "adjunto_id": adj_id})
+    conn.close()
+
+
+def _datos_acta(conn, row, resp, acciones, aclaraciones: str, fecha_verif: date,
+                criterio: str, actor: Actor, ahora: str) -> dict:
+    """Todo lo que va en el acta (y en su contenido canónico)."""
+    acept = conn.execute("SELECT usuario, ts FROM nc_eventos WHERE entidad = 'nc' AND"
+                         " entidad_id = ? AND tipo = 'DESCARGO_ACEPTADO' ORDER BY id DESC"
+                         " LIMIT 1", (row["id"],)).fetchone()
+    adjs = [dict(a) for a in conn.execute(
+        "SELECT id, nombre, sha256, subido_en FROM nc_adjuntos"
+        " WHERE nc_id = ? AND etapa = 'respuesta' AND respuesta_id = ? ORDER BY id",
+        (row["id"], resp["id"]))]
+    return {
+        "nc": {k: row[k] for k in ("id", "numero", "codigodepo", "sucursal_nombre", "area",
+                                   "tipo", "fecha", "req_codigo", "req_titulo", "sop_version",
+                                   "desvio_txt", "recepcion_ts", "sha256_contenido")},
+        "respuesta": {k: resp[k] for k in ("id", "intento", "correccion", "causa_raiz",
+                                           "categoria_6m", "cargada_por", "cargada_en")},
+        "intentos_previos": resp["intento"] - 1,
+        "acciones": [{"id": a["id"], "descripcion": a["descripcion"],
+                      "responsable": a["responsable"],
+                      "fecha_compromiso": a["fecha_compromiso"],
+                      "fecha_real": a["implementacion"]["fecha_real"],
+                      "evidencia": a["implementacion"]["evidencia_txt"]} for a in acciones],
+        "aceptado_por": acept["usuario"] if acept else None,
+        "aceptado_en": acept["ts"] if acept else None,
+        "adjuntos": adjs,
+        "aclaraciones": (aclaraciones or "").strip(),
+        "fecha_verificacion_programada": fecha_verif.isoformat(),
+        "criterio_verificacion": criterio.strip(),
+        "cerrada_por": actor.username,
+        "cerrada_por_nombre": actor.nombre,
+        "cerrada_en": ahora,
+    }
+
+
+def cerrar_con_sucursal(proyecto, actor: Actor, nc_id: int, fecha_verificacion: date,
+                        criterio: str, aclaraciones: str = "", render=None) -> str:
+    """Cierra el caso con la sucursal y congela el acta. Exige todas las acciones
+    implementadas; la verificación de eficacia queda programada. Devuelve el HTML."""
+    _exigir(actor, "nc_emitir")
+    if not (criterio or "").strip():
+        raise NCError("El criterio de verificación de eficacia es obligatorio.")
+    if fecha_verificacion <= date.today():
+        raise NCError("La verificación de eficacia tiene que programarse para después de hoy.")
+    if render is None:
+        from core.reporte import generar_acta_cierre
+        render = lambda acta, cfg: generar_acta_cierre(proyecto, acta, cfg)  # noqa: E731
+    cfg = cargar_config(proyecto)
+    conn = conectar(proyecto)
+    with _tx(conn):
+        row = _estado(conn, nc_id, ESTADOS_ACEPTADA)
+        resp = _respuesta_aceptada(conn, nc_id)
+        acciones = _acciones_impl(conn, resp["id"])
+        faltan = [a["descripcion"][:50] for a in acciones if a["implementacion"] is None]
+        if faltan:
+            raise NCError("Faltan implementar: " + "; ".join(faltan) + ".")
+        ahora = _ahora()
+        acta = _datos_acta(conn, row, resp, acciones, aclaraciones, fecha_verificacion,
+                           criterio, actor, ahora)
+        acta["sha256_contenido"] = sha256_bytes(_json(acta).encode("utf-8"))
+        html = render(acta, cfg)
+        h_html = sha256_bytes(html.encode("utf-8"))
+        conn.execute(
+            "INSERT INTO nc_cierre (nc_id, respuesta_id, aclaraciones,"
+            " fecha_verificacion_programada, criterio_verificacion, html_acta, sha256_html,"
+            " sha256_contenido, cerrada_por, cerrada_en) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (nc_id, resp["id"], acta["aclaraciones"], acta["fecha_verificacion_programada"],
+             acta["criterio_verificacion"], html, h_html, acta["sha256_contenido"],
+             actor.username, ahora))
+        conn.execute("UPDATE nc SET estado = 'CERRADA_SUCURSAL' WHERE id = ?", (nc_id,))
+        _evento(conn, "nc", nc_id, actor, "CERRADA_SUCURSAL", row["estado"],
+                "CERRADA_SUCURSAL",
+                {"respuesta_id": resp["id"], "sha256_html": h_html,
+                 "sha256_contenido": acta["sha256_contenido"],
+                 "fecha_verificacion_programada": acta["fecha_verificacion_programada"],
+                 "acciones": [a["id"] for a in acciones]})
+    conn.close()
+    return html
+
+
+def cierre(proyecto, nc_id: int) -> dict | None:
+    conn = conectar(proyecto)
+    r = conn.execute("SELECT * FROM nc_cierre WHERE nc_id = ?", (nc_id,)).fetchone()
+    conn.close()
+    return dict(r) if r else None
+
+
+def acta_verificada(proyecto, nc_id: int) -> str:
+    """HTML del acta de cierre, validado contra el hash del evento CERRADA_SUCURSAL."""
+    conn = conectar(proyecto)
+    try:
+        r = conn.execute("SELECT html_acta FROM nc_cierre WHERE nc_id = ?",
+                         (nc_id,)).fetchone()
+        if r is None:
+            raise NCError("La NC no tiene acta de cierre.")
+        ev = conn.execute("SELECT datos FROM nc_eventos WHERE entidad = 'nc' AND entidad_id = ?"
+                          " AND tipo = 'CERRADA_SUCURSAL' ORDER BY id LIMIT 1",
+                          (nc_id,)).fetchone()
+        esperado = json.loads(ev["datos"])["sha256_html"] if ev else None
+        if sha256_bytes(r["html_acta"].encode("utf-8")) != esperado:
+            raise NCError("El acta de cierre guardada no coincide con el hash registrado al "
+                          "cerrar. No se usa: revisar integridad.")
+        return r["html_acta"]
+    finally:
+        conn.close()
+
+
+def verificar_actas(proyecto) -> list[str]:
+    conn = conectar(proyecto)
+    problemas = []
+    for r in conn.execute(
+            "SELECT n.numero, c.html_acta, e.datos FROM nc_cierre c JOIN nc n ON n.id = c.nc_id"
+            " LEFT JOIN nc_eventos e ON e.entidad = 'nc' AND e.entidad_id = c.nc_id"
+            " AND e.tipo = 'CERRADA_SUCURSAL'"):
+        esperado = json.loads(r["datos"])["sha256_html"] if r["datos"] else None
+        if sha256_bytes(r["html_acta"].encode("utf-8")) != esperado:
+            problemas.append(f"NC {r['numero']}: el acta de cierre no coincide con su hash.")
+    conn.close()
+    return problemas
+
+
+def registrar_envio_cierre(proyecto, actor: Actor, nc_id: int, envio: dict,
+                           adjunto: tuple[str, bytes]) -> None:
+    """Acta de cierre enviada por mail (aceptada por el servidor). No cambia el estado."""
+    _exigir(actor, "nc_emitir")
+    conn = conectar(proyecto)
+    with _tx(conn):
+        row = _estado(conn, nc_id, ESTADOS_CON_ACTA)
+        adj_id = _guardar_adjunto(conn, proyecto, actor, row, "envio", *adjunto)
+        eid = _insertar_envio(conn, nc_id, actor, envio, "OK", adj_id)
+        _evento(conn, "nc", nc_id, actor, "ACTA_CIERRE_ENVIADA", row["estado"], row["estado"],
+                {"canal": envio["canal"], "para": envio["para"], "cc": envio.get("cc") or [],
+                 "cco": envio.get("cco") or [], "asunto": envio["asunto"],
+                 "message_id": envio.get("message_id"), "envio_id": eid,
+                 "adjunto_id": adj_id, "adjunto_sha256": sha256_bytes(adjunto[1]),
+                 "sha256_cuerpo": sha256_bytes((envio.get("cuerpo") or "").encode("utf-8"))})
     conn.close()
 
 
 def verificar_eficacia(proyecto, actor: Actor, nc_id: int, fecha: date, resultado: str,
                        evidencia_txt: str, adjunto: tuple[str, bytes] | None = None
                        ) -> int | None:
-    """Cierre con verificación. Si NO_EFICAZ, devuelve el id de la NC nueva (borrador)."""
+    """Verificación de eficacia de una NC cerrada con la sucursal: la cierra para el SGC.
+    Si NO_EFICAZ, devuelve el id de la NC nueva (borrador)."""
     _exigir(actor, "nc_verificar")
     if resultado not in ("EFICAZ", "NO_EFICAZ"):
         raise NCError("Resultado inválido.")
@@ -1240,7 +1567,7 @@ def verificar_eficacia(proyecto, actor: Actor, nc_id: int, fecha: date, resultad
     conn = conectar(proyecto)
     nueva = None
     with _tx(conn):
-        row = _estado(conn, nc_id, ("EN_VERIFICACION",))
+        row = _estado(conn, nc_id, ESTADOS_VERIFICACION_PENDIENTE)
         quien_respondio = conn.execute(
             "SELECT cargada_por FROM nc_respuesta WHERE nc_id = ? ORDER BY intento DESC"
             " LIMIT 1", (nc_id,)).fetchone()["cargada_por"]
@@ -1275,7 +1602,7 @@ def verificar_eficacia(proyecto, actor: Actor, nc_id: int, fecha: date, resultad
             datos["nc_nueva_id"] = nueva
             _evento(conn, "nc", nueva, actor, "CREADA", None, "BORRADOR",
                     {"origen_id": nc_id, "motivo": "verificación no eficaz"})
-        _evento(conn, "nc", nc_id, actor, "VERIFICADA", "EN_VERIFICACION", destino, datos)
+        _evento(conn, "nc", nc_id, actor, "VERIFICADA", row["estado"], destino, datos)
     conn.close()
     return nueva
 
@@ -1289,7 +1616,7 @@ def anular(proyecto, actor: Actor, nc_id: int, motivo: str, aviso_sucursal: str 
     conn = conectar(proyecto)
     nueva = None
     with _tx(conn):
-        row = _estado(conn, nc_id, ("EMITIDA", "ENVIADA", "RESPONDIDA", "EN_VERIFICACION"))
+        row = _estado(conn, nc_id, ESTADOS_ABIERTOS)
         if row["estado"] == "EMITIDA":
             if not (actor.tiene("nc_emitir") or actor.tiene("nc_anular")):
                 raise NCError("No tenés permiso para anular.")
@@ -1368,14 +1695,18 @@ def listar(proyecto, ahora: datetime | None = None) -> list[dict]:
         "SELECT id, numero, estado, fecha, codigodepo, sucursal_nombre, area, tipo,"
         " tipo_severidad, req_codigo, req_titulo, recepcion_ts, fecha_limite_contencion,"
         " fecha_limite_descargo, plazo_impl_max_dias, solicitante, reemplaza_a, origen_id,"
-        " (SELECT MAX(a.fecha_compromiso) FROM nc_acciones_correctivas a JOIN nc_respuesta r"
+        " (SELECT MIN(a.fecha_compromiso) FROM nc_acciones_correctivas a JOIN nc_respuesta r"
         "   ON a.respuesta_id = r.id WHERE r.nc_id = nc.id AND r.intento ="
-        "   (SELECT MAX(intento) FROM nc_respuesta WHERE nc_id = nc.id)) AS max_compromiso"
+        "   (SELECT MAX(intento) FROM nc_respuesta WHERE nc_id = nc.id)"
+        "   AND a.id NOT IN (SELECT accion_id FROM nc_implementacion)) AS compromiso_pendiente,"
+        " (SELECT fecha_verificacion_programada FROM nc_cierre c WHERE c.nc_id = nc.id)"
+        "   AS verificacion_programada"
         " FROM nc ORDER BY fecha DESC, id DESC")]
     conn.close()
     for r in rows:
         r["numero_impreso"] = numero_impreso(r["numero"])
-        r["vencimientos"] = vencimientos(r, ahora, r["max_compromiso"])
+        r["vencimientos"] = vencimientos(r, ahora, r["compromiso_pendiente"],
+                                         r["verificacion_programada"])
     return rows
 
 

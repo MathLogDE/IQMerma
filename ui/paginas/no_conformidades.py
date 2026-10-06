@@ -5,7 +5,7 @@ solo se arma el actor (admin = todos los roles; cliente = roles_nc del YAML) y
 los formularios. Los colores amarillo/naranja/rojo quedan reservados para la
 severidad: los vencimientos se muestran como texto.
 """
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -24,9 +24,19 @@ from core.reporte import generar_no_conformidad, vista_anexo
 
 _ICONO_ESTADO = {
     "BORRADOR": "📝", "EMITIDA": "📄", "ENVIADA": "📨", "RESPONDIDA": "💬",
-    "EN_VERIFICACION": "🔎", "CERRADA": "✅", "CERRADA_NO_EFICAZ": "↩",
-    "ANULADA": "🚫",
+    "ACEPTADA": "🛠", "EN_VERIFICACION": "🛠", "CERRADA_SUCURSAL": "📬", "CERRADA": "✅",
+    "CERRADA_NO_EFICAZ": "↩", "ANULADA": "🚫",
 }
+_ETIQUETA_ESTADO = {
+    "ACEPTADA": "EN IMPLEMENTACIÓN",
+    "EN_VERIFICACION": "EN IMPLEMENTACIÓN",
+    "CERRADA_SUCURSAL": "CERRADA CON SUCURSAL · verificación pendiente",
+    "CERRADA": "CERRADA (eficaz)",
+}
+
+
+def _estado_txt(est: str) -> str:
+    return f"{_ICONO_ESTADO.get(est, '')} {_ETIQUETA_ESTADO.get(est, est)}"
 
 
 # ---------------------------------------------------------------------------
@@ -88,12 +98,16 @@ def render(proyecto):
 
     filas = nc.listar(proyecto)
     abiertas = [f for f in filas if f["estado"] in nc.ESTADOS_ABIERTOS]
-    c1, c2, c3, c4 = st.columns(4)
+    pendientes = [f for f in filas if f["estado"] in nc.ESTADOS_VERIFICACION_PENDIENTE]
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Abiertas", len(abiertas))
     c2.metric("Con vencimientos", sum(1 for f in abiertas
                                      if any("⏰" in v for v in f["vencimientos"])))
-    c3.metric("En verificación", sum(1 for f in filas if f["estado"] == "EN_VERIFICACION"))
-    c4.metric("Borradores", sum(1 for f in filas if f["estado"] == "BORRADOR"))
+    c3.metric("En implementación", sum(1 for f in filas if f["estado"] in nc.ESTADOS_ACEPTADA))
+    c4.metric("Verificación pendiente", len(pendientes),
+              help="Cerradas con la sucursal: falta verificar la eficacia (ISO 9001 §10.2). "
+                   f"Vencidas: {sum(1 for f in pendientes if any('⏰' in v for v in f['vencimientos']))}.")
+    c5.metric("Borradores", sum(1 for f in filas if f["estado"] == "BORRADOR"))
 
     pestañas = ["➕ Nueva NC", "📋 Seguimiento", "📇 Contactos", "🗒 Observaciones", "📘 SOP",
                 "🛡 Integridad"]
@@ -117,11 +131,11 @@ def render(proyecto):
             _tab_config(proyecto, cfg)
 
 
-def _descargas(html: str, numero: str, key: str) -> None:
+def _descargas(html: str, numero: str, key: str, prefijo: str = "NC") -> None:
     """HTML imprimible + PDF (generado con el navegador del servidor)."""
     c1, c2 = st.columns(2)
     with c1:
-        boton_reporte(html, f"NC_{numero}.html", key=f"{key}_html")
+        boton_reporte(html, f"{prefijo}_{numero}.html", key=f"{key}_html")
     with c2:
         if not pdf.disponible():
             st.caption("PDF no disponible: no se encontró Edge ni Chrome en el servidor.")
@@ -135,7 +149,7 @@ def _descargas(html: str, numero: str, key: str) -> None:
                     st.session_state[k] = b
                     st.rerun()
         else:
-            st.download_button("📑 Descargar PDF", st.session_state[k], f"NC_{numero}.pdf",
+            st.download_button("📑 Descargar PDF", st.session_state[k], f"{prefijo}_{numero}.pdf",
                                "application/pdf", key=f"{key}_pdf_dl")
 
 
@@ -421,7 +435,7 @@ def _tab_seguimiento(proyecto, cfg, actor, filas):
 
     df = pd.DataFrame([{
         "Número": f["numero_impreso"], "Fecha": f["fecha"], "Sucursal": f["sucursal_nombre"],
-        "Tipo": f["tipo"], "Estado": f"{_ICONO_ESTADO.get(f['estado'], '')} {f['estado']}",
+        "Tipo": f["tipo"], "Estado": _estado_txt(f["estado"]),
         "Plazos": " · ".join(f["vencimientos"]) or "—",
         "Requisito": f"{f['req_codigo']} {f['req_titulo'] or ''}",
     } for f in vista])
@@ -439,7 +453,7 @@ def _tab_seguimiento(proyecto, cfg, actor, filas):
 def _detalle(proyecto, cfg, actor, nc_id):
     n = nc.obtener(proyecto, nc_id)
     st.markdown(f"### NC {nc.numero_impreso(n['numero'])} · {n['tipo']} · "
-                f"{_ICONO_ESTADO.get(n['estado'], '')} {n['estado']}")
+                f"{_estado_txt(n['estado'])}")
     c1, c2, c3 = st.columns(3)
     c1.markdown(f"**Sucursal:** {n['sucursal_nombre']} ({n['codigodepo']})  \n"
                 f"**Fecha:** {n['fecha']}  \n**Área:** {n['area']}")
@@ -485,9 +499,38 @@ def _detalle(proyecto, cfg, actor, nc_id):
                         f"**Causa raíz ({r['categoria_6m']}):** {r['causa_raiz']}")
             if r["observada"]:
                 st.markdown(f"**Motivo de la observación:** {r['motivo_observacion']}")
-            st.dataframe(pd.DataFrame(r["acciones"])[["descripcion", "responsable",
-                                                       "fecha_compromiso"]],
-                         hide_index=True, width="stretch")
+            acciones = r["acciones"]
+            if r is rs[-1] and n["estado"] in nc.ESTADOS_ACEPTADA + nc.ESTADOS_CON_ACTA:
+                impl = {a["id"]: a["implementacion"]
+                        for a in nc.acciones_con_implementacion(proyecto, nc_id)}
+                acciones = [{**a, "implementada": (impl.get(a["id"]) or {}).get("fecha_real")
+                             or "pendiente",
+                             "evidencia": (impl.get(a["id"]) or {}).get("evidencia_txt") or ""}
+                            for a in acciones]
+            cols = [c for c in ("descripcion", "responsable", "fecha_compromiso", "implementada",
+                                "evidencia") if c in (acciones[0] if acciones else {})]
+            st.dataframe(pd.DataFrame(acciones)[cols], hide_index=True, width="stretch")
+    c = nc.cierre(proyecto, nc_id)
+    if c:
+        with st.container(border=True):
+            st.markdown(f"**Acta de cierre con la sucursal** · {c['cerrada_en'][:16]} · "
+                        f"por {c['cerrada_por']}  \n"
+                        f"**Verificación de eficacia programada:** "
+                        f"{date.fromisoformat(c['fecha_verificacion_programada']):%d/%m/%Y}  \n"
+                        f"**Criterio:** {c['criterio_verificacion']}")
+            if c["aclaraciones"]:
+                st.markdown(f"**Aclaraciones:** {c['aclaraciones']}")
+            k_acta = f"acta_html_{nc_id}"
+            if k_acta not in st.session_state:
+                if st.button("📄 Preparar acta (HTML / PDF)", key=f"acta_{nc_id}"):
+                    ok, html = _err(nc.acta_verificada, proyecto, nc_id)
+                    if ok:
+                        st.session_state[k_acta] = html
+                        st.rerun()
+            else:
+                _descargas(st.session_state[k_acta], n["numero"], key=f"acta_dl_{nc_id}",
+                           prefijo="Acta_cierre_NC")
+                st.caption(f"SHA-256 verificado: `{c['sha256_html']}`")
     v = nc.verificacion(proyecto, nc_id)
     if v:
         st.markdown(f"**Verificación:** {v['resultado']} · {v['fecha']} · por {v['verificador']}"
@@ -525,10 +568,12 @@ def _detalle(proyecto, cfg, actor, nc_id):
     _acciones(proyecto, cfg, actor, n)
 
 
-def _form_mail(proyecto, actor, n):
-    """Redactar, previsualizar y enviar la NC por mail (Para / CC / CCO editables)."""
+def _form_mail(proyecto, actor, n, cierre: bool = False):
+    """Redactar, previsualizar y enviar por mail la NC o, con `cierre`, su acta de
+    cierre (Para / CC / CCO editables)."""
     nc_id = n["id"]
-    k = f"mail_{nc_id}"
+    k = f"mail_cierre_{nc_id}" if cierre else f"mail_{nc_id}"
+    componer = nc_mail.componer_cierre if cierre else nc_mail.componer
     cfg = nc.cargar_config(proyecto)
     mcfg = nc_mail.config_mail(cfg)
     # Un borrador armado por una versión anterior de esta página (sin `redactado` /
@@ -536,17 +581,21 @@ def _form_mail(proyecto, actor, n):
     if "redactado" not in st.session_state.get(f"{k}_borr", {}):
         for suf in ("_borr", "_asunto", "_cuerpo", "_firma", "_ok"):
             st.session_state.pop(f"{k}{suf}", None)
-        ok, borr = _err(nc_mail.componer, proyecto, nc_id)
+        ok, borr = _err(componer, proyecto, nc_id)
         if not ok:
             return
         st.session_state[f"{k}_borr"] = borr
     b = st.session_state[f"{k}_borr"]
     reenvio = n["estado"] != "EMITIDA"
 
-    st.caption(f"Desde **{mcfg['remitente']}**. "
-               + ("Reenvío: los plazos ya corren desde la primera notificación."
-                  if reenvio else "Al enviarse, la NC pasa a ENVIADA y los plazos corren "
-                                  "desde este momento."))
+    if cierre:
+        st.caption(f"Desde **{mcfg['remitente']}**. Se adjunta el acta de cierre congelada; "
+                   "enviarla no cambia el estado de la NC.")
+    else:
+        st.caption(f"Desde **{mcfg['remitente']}**. "
+                   + ("Reenvío: los plazos ya corren desde la primera notificación."
+                      if reenvio else "Al enviarse, la NC pasa a ENVIADA y los plazos corren "
+                                      "desde este momento."))
     dest = st.data_editor(
         pd.DataFrame(b["destinatarios"] or [{"nombre": "", "mail": "", "para": True,
                                              "cc": False, "cco": False}]),
@@ -600,14 +649,16 @@ def _form_mail(proyecto, actor, n):
             destinatarios += [{"nombre": c["nombre"], "mail": c["mail"], "para": col == "para",
                                "cc": col == "cc", "cco": col == "cco"} for c in por_opcion[o]]
     para, cc, cco = nc_mail.separar(destinatarios)
-    prev = nc_mail.previsualizar(proyecto, nc_id, asunto, cuerpo, firma)
+    prev = nc_mail.previsualizar(proyecto, nc_id, asunto, cuerpo, firma, cierre=cierre)
+    adjunto_txt = (f"Acta de cierre NC {n['numero']}.pdf" if cierre
+                   else f"No conformidad {n['numero']}.pdf")
     with st.container(border=True):
         st.markdown(f"**De:** {mcfg['nombre_remitente']} <{mcfg['remitente']}>  \n"
                     f"**Para:** {', '.join(para) or '—'}  \n"
                     f"**CC:** {', '.join(cc) or '—'}  \n"
                     f"**CCO:** {', '.join(cco) or '—'}  \n"
                     f"**Asunto:** {prev['asunto']}  \n"
-                    f"**Adjunto:** No conformidad {n['numero']}.pdf")
+                    f"**Adjunto:** {adjunto_txt}")
         st.text(prev["texto"])
 
     tiene_pwd = bool(nc_mail.password(mcfg["remitente"]))
@@ -627,15 +678,22 @@ def _form_mail(proyecto, actor, n):
     if st.button("📨 Enviar mail", type="primary", key=f"{k}_enviar",
                  disabled=not (confirmo and tiene_pwd and pdf.disponible() and para)):
         with st.spinner("Generando PDF y enviando…"):
-            ok, r = _err(nc_mail.enviar_nc, proyecto, actor, nc_id, destinatarios, asunto,
-                         cuerpo, firma, guardar_nuevos=guardar_nuevos,
-                         referencia=b.get("referencia"))
+            if cierre:
+                ok, r = _err(nc_mail.enviar_cierre, proyecto, actor, nc_id, destinatarios,
+                             asunto, cuerpo, firma, guardar_nuevos=guardar_nuevos)
+                if ok:
+                    r = {**r, "reenvio": True}
+            else:
+                ok, r = _err(nc_mail.enviar_nc, proyecto, actor, nc_id, destinatarios, asunto,
+                             cuerpo, firma, guardar_nuevos=guardar_nuevos,
+                             referencia=b.get("referencia"))
         if ok:
             for suf in ("_borr", "_dest", "_asunto", "_cuerpo", "_firma", "_ok", "_q_para",
                         "_q_cc", "_q_cco", "_guardar_nuevos"):
                 st.session_state.pop(f"{k}{suf}", None)
             st.session_state["nc_mail_ok"] = (
-                f"Mail enviado a {', '.join(para + cc)}"
+                ("Acta de cierre enviada a " if cierre else "Mail enviado a ")
+                + ", ".join(para + cc)
                 + (f" (+{len(cco)} en CCO)" if cco else "")
                 + ("" if r["reenvio"] else
                    f". Descargo hasta el {r['plazos']['fecha_limite_descargo']}.")
@@ -705,7 +763,7 @@ def _acciones(proyecto, cfg, actor, n):
     if est == "RESPONDIDA" and actor.tiene("nc_emitir"):
         c1, c2 = st.columns(2)
         with c1.form(f"acept_{nc_id}"):
-            st.markdown("**Aceptar descargo** → queda en verificación de eficacia")
+            st.markdown("**Aceptar descargo** → las acciones quedan en implementación")
             if st.form_submit_button("✔ Aceptar"):
                 if _err(nc.aceptar_descargo, proyecto, actor, nc_id)[0]:
                     st.rerun()
@@ -720,9 +778,16 @@ def _acciones(proyecto, cfg, actor, n):
                     st.success(f"Nuevo plazo de descargo: {nuevo}")
                     st.rerun()
 
-    if est == "EN_VERIFICACION" and actor.tiene("nc_verificar"):
+    if est in nc.ESTADOS_ACEPTADA:
+        _implementacion_y_cierre(proyecto, cfg, actor, n)
+
+    if est in nc.ESTADOS_CON_ACTA and actor.tiene("nc_emitir"):
+        with st.expander("✉ Enviar acta de cierre por mail"):
+            _form_mail(proyecto, actor, n, cierre=True)
+
+    if est in nc.ESTADOS_VERIFICACION_PENDIENTE and actor.tiene("nc_verificar"):
         with st.form(f"verif_{nc_id}"):
-            st.markdown("**Verificar eficacia y cerrar**")
+            st.markdown("**Verificar eficacia** → cierra la NC para el sistema de gestión")
             c1, c2 = st.columns(2)
             f = c1.date_input("Fecha de verificación", value=date.today(), format="DD/MM/YYYY")
             res = c2.radio("Resultado", ["EFICAZ", "NO_EFICAZ"], horizontal=True)
@@ -736,7 +801,7 @@ def _acciones(proyecto, cfg, actor, n):
                         st.warning(f"No eficaz: se creó el borrador #{nueva} vinculado.")
                     st.rerun()
 
-    if est in ("EMITIDA", "ENVIADA", "RESPONDIDA", "EN_VERIFICACION") and (
+    if est in nc.ESTADOS_ABIERTOS and (
             actor.tiene("nc_anular") or (est == "EMITIDA" and actor.tiene("nc_emitir"))):
         with st.expander("🚫 Anular"):
             with st.form(f"anular_{nc_id}"):
@@ -751,6 +816,56 @@ def _acciones(proyecto, cfg, actor, n):
                         if nueva:
                             st.info(f"Borrador de reemplazo #{nueva} en ➕ Nueva NC.")
                         st.rerun()
+
+
+def _implementacion_y_cierre(proyecto, cfg, actor, n):
+    """ACEPTADA: registrar la implementación de cada acción y cerrar con la sucursal."""
+    nc_id = n["id"]
+    acciones = nc.acciones_con_implementacion(proyecto, nc_id)
+    pendientes = [a for a in acciones if a["implementacion"] is None]
+    st.markdown(f"**Implementación de acciones correctivas** — "
+                f"{len(acciones) - len(pendientes)} de {len(acciones)} implementadas")
+
+    if pendientes and actor.tiene("nc_responder"):
+        with st.form(f"impl_{nc_id}"):
+            st.caption("Transcribí lo que informa la sucursal sobre cada acción.")
+            etiquetas = {f"{a['descripcion'][:70]} · {a['responsable']} · compromiso "
+                         f"{a['fecha_compromiso']}": a["id"] for a in pendientes}
+            elegida = st.selectbox("Acción", list(etiquetas))
+            f = st.date_input("Fecha de implementación", value=date.today(),
+                              max_value=date.today(), format="DD/MM/YYYY")
+            evid = st.text_area("Evidencia (qué se hizo y cómo se comprueba)")
+            adj = st.file_uploader("Evidencia adjunta (opcional)", key=f"impl_adj_{nc_id}")
+            if st.form_submit_button("🛠 Registrar implementación"):
+                if _err(nc.registrar_implementacion, proyecto, actor, nc_id, etiquetas[elegida],
+                        f, evid, _adjunto(adj))[0]:
+                    st.rerun()
+    elif pendientes:
+        st.caption("Falta registrar la implementación (rol nc_responder).")
+
+    if not actor.tiene("nc_emitir"):
+        return
+    if pendientes:
+        st.info("Para cerrar con la sucursal tienen que estar implementadas todas las acciones.")
+        return
+    with st.form(f"cierre_{nc_id}"):
+        st.markdown("**Cerrar con la sucursal** → se congela el acta y la verificación de "
+                    "eficacia queda programada")
+        sugerida = date.today() + timedelta(days=nc.dias_verificacion(cfg, n["tipo"]))
+        fv = st.date_input("Verificación de eficacia programada para", value=sugerida,
+                           min_value=date.today() + timedelta(days=1), format="DD/MM/YYYY")
+        criterio = st.text_area("Criterio de verificación (métrica y meta)",
+                                value=nc.criterio_sugerido(n))
+        aclar = st.text_area("Aclaraciones de cierre (opcional, van en el acta)")
+        st.caption("El acta incluye el descargo aceptado, la implementación de cada acción y "
+                   "los adjuntos del descargo (nombre y huella). Después se puede descargar y "
+                   "enviar por mail.")
+        if st.form_submit_button("📬 Cerrar con la sucursal", type="primary"):
+            ok, _ = _err(nc.cerrar_con_sucursal, proyecto, actor, nc_id, fv, criterio, aclar)
+            if ok:
+                st.session_state["nc_mail_ok"] = ("NC cerrada con la sucursal. Acta lista para "
+                                                  "descargar y enviar.")
+                st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -890,9 +1005,11 @@ def _tab_integridad(proyecto):
                 f"{a['hash']}", language=None)
     if st.button("🛡 Verificar integridad"):
         ok, probs = nc.verificar_cadena(proyecto)
-        probs += nc.verificar_html_emitidos(proyecto) + nc.verificar_adjuntos(proyecto)
+        probs += (nc.verificar_html_emitidos(proyecto) + nc.verificar_actas(proyecto)
+                  + nc.verificar_adjuntos(proyecto))
         if not probs:
-            st.success("Cadena de eventos, HTML emitidos y adjuntos: todo coincide.")
+            st.success("Cadena de eventos, HTML emitidos, actas de cierre y adjuntos: "
+                       "todo coincide.")
         for p in probs:
             st.error(p)
     if not modo_solo_lectura() and st.button("💾 Backup NC"):
@@ -945,6 +1062,9 @@ def _config_mail(proyecto, cfg):
     asunto = st.text_input("Asunto por defecto", m["asunto"], key="mc_asunto")
     cuerpo = st.text_area("Texto por defecto", m["cuerpo"], height=300, key="mc_cuerpo")
     firma = st.text_area("Firma por defecto", m["firma"], height=100, key="mc_firma")
+    asunto_c = st.text_input("Asunto del acta de cierre", m["asunto_cierre"], key="mc_asunto_c")
+    cuerpo_c = st.text_area("Texto del acta de cierre", m["cuerpo_cierre"], height=260,
+                            key="mc_cuerpo_c")
     st.caption("Marcadores: " + ", ".join(f"`{{{x}}}`" for x in nc_mail.MARCADORES))
 
     acuse = st.number_input("Horas para confirmar recepción y devolver firmada",
@@ -959,6 +1079,7 @@ def _config_mail(proyecto, cfg):
             "remitente": remitente.strip(), "nombre_remitente": nombre.strip(),
             "smtp_host": host.strip(), "smtp_port": int(port), "asunto": asunto,
             "cuerpo": cuerpo, "firma": firma, "acuse_horas": int(acuse),
+            "asunto_cierre": asunto_c, "cuerpo_cierre": cuerpo_c,
         })
         st.success("Configuración de mail guardada.")
 
@@ -969,7 +1090,9 @@ def _tab_config(proyecto, cfg):
     st.markdown("#### Tipos, plazos y catálogos")
     st.caption(f"projects/{proyecto}/nc_config.json — tipos y plazos, catálogos, días "
                "hábiles (sabado_habil, provincia_por_deposito con subdivisiones de "
-               "`holidays` AR, feriados_extra) y la regla verificador_distinto. Los "
+               "`holidays` AR, feriados_extra), la regla verificador_distinto y, por "
+               "tipo, verificacion_dias (días sugeridos entre el cierre con la sucursal y "
+               "la verificación de eficacia). Los "
                "cambios no afectan NC ya emitidas: sus plazos quedan congelados.")
     import json
     sin_mail = {kk: v for kk, v in cfg.items() if kk != "mail"}

@@ -1,6 +1,6 @@
 # IQMerma — Estrategia de compliance y expansión
 
-> **Versión:** 1.0 · **Fecha:** 2026-10-05 · **Branch:** `desarrollo-compliance`
+> **Versión:** 1.1 · **Fecha:** 2026-10-05 · **Branch:** `desarrollo-compliance`
 >
 > Este documento **no contiene datos del cliente**: ni nombre, sucursales, cifras, cuentas o
 > dominios. Se puede compartir. Al cliente actual se lo llama **cliente piloto (retail de
@@ -148,7 +148,7 @@ dato o un registro.
 | **9.1** Seguimiento, medición, análisis | **Sí** | Análisis de merma, control, salud, Pareto, forecast | KPIs formales, SPC, IRA | IRA (con su validación, §4.1), cartas de control (§4.2), KPIs de NC. **Fases 1–2** |
 | **9.2** Auditoría interna | **Parcial** | Las observaciones (OBS) y las NC son los hallazgos | Programa de auditoría (qué, dónde, cuándo, quién), checklist por artículo del SOP | Programa anual por sucursal × artículo del SOP. Los hallazgos se cargan como OBS o NC. **Fase 2** |
 | **9.3** Revisión por la dirección | **Parcial** | Los datos existen dispersos | Reporte con las entradas de 9.3.2 | Reporte imprimible que junta objetivos, NC, auditorías, desempeño de proveedores y riesgos. La revisión en sí la hace la dirección. **Fase 2** |
-| **10.2** No conformidad y acción correctiva | **Sí** | Ciclo completo: emisión con número y hash, descargo con causa raíz 6M, verificación de eficacia por otra persona, cierre o NC nueva, anulación con motivo | Acuse de recibo registrado, recordatorios de vencimiento, reincidencia, eficacia medida con métrica Y | Fase 1: acuse y recordatorios. Fase 2: reincidencia → DMAIC (§4.5) |
+| **10.2** No conformidad y acción correctiva | **Sí** | Ciclo completo: emisión con número y hash, descargo con causa raíz 6M, implementación de cada acción con evidencia, **cierre con la sucursal con acta congelada y verificación de eficacia programada** (fecha y criterio), verificación por otra persona, NC nueva si no es eficaz, anulación con motivo | Acuse de recibo registrado, recordatorios de vencimiento, reincidencia, eficacia medida con métrica Y | Fase 1: acuse y recordatorios. Fase 2: reincidencia → DMAIC (§4.5) |
 | **10.3** Mejora continua | **Parcial** | — | Proyectos de mejora con seguimiento | Charter DMAIC generado desde la reincidencia (§4.5) |
 
 ---
@@ -442,3 +442,4 @@ Las entrevistas **corren en paralelo desde la Fase 1** y no esperan a la general
 | Fecha | Versión | Cambio |
 |---|---|---|
 | 2026-10-05 | 1.0 | Primera versión: visión, ADR-1/2/3, brecha ISO 9001, LSS (con la verificación de IRA en datos), generalización, minería, roadmap |
+| 2026-10-05 | 1.1 | Brecha 10.2: cierre con la sucursal + verificación de eficacia programada |

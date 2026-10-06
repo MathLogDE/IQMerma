@@ -1,6 +1,6 @@
 # IQMerma — Documento de referencia
 
-> **Versión del documento:** 1.1 · **Fecha:** 2026-10-05 · **Base:** branch `desarrollo-compliance`
+> **Versión del documento:** 1.2 · **Fecha:** 2026-10-05 · **Base:** branch `desarrollo-compliance`
 > (sale de `visualizaciones` @ `bbaf0f9`). La estrategia hacia ISO 9001 / Lean Six Sigma está en
 > [ESTRATEGIA_COMPLIANCE.md](ESTRATEGIA_COMPLIANCE.md).
 >
@@ -207,7 +207,7 @@ Estado: ✅ en uso · 🧪 en prueba · 🔒 solo admin.
 ### Auditoría
 | Página | Qué hace | Motor | Estado |
 |---|---|---|---|
-| No conformidades | Ciclo completo de una NC: borrador → emisión con número y hash → envío por mail con PDF → descargo → verificación de eficacia → cierre. También observaciones, SOP versionado, anexos con datos de IQMerma, agenda de contactos, verificación de integridad y backup | `core/no_conformidades.py` + `sop.py`, `nc_anexos.py`, `nc_mail.py`, `nc_contactos.py` | ✅ v1 (mail probado solo con SMTP simulado) |
+| No conformidades | Ciclo completo de una NC: borrador → emisión con número y hash → envío por mail con PDF → descargo → implementación de acciones → **cierre con la sucursal con acta exportable y enviable por mail** → verificación de eficacia programada → cierre. También observaciones, SOP versionado, anexos con datos de IQMerma, agenda de contactos, verificación de integridad y backup | `core/no_conformidades.py` + `sop.py`, `nc_anexos.py`, `nc_mail.py`, `nc_contactos.py` | ✅ v1 (mail probado solo con SMTP simulado) |
 
 ### Transversal
 - **Reportes imprimibles con la marca del cliente:** casi todas las páginas tienen uno
@@ -428,13 +428,34 @@ documentada) y el **SOP Rio Shop v2** del cliente (§8.1 observaciones, §8.2 es
 
 ### 6.1 Ciclo de vida
 ```
-BORRADOR → EMITIDA → ENVIADA → RESPONDIDA → EN_VERIFICACION → CERRADA
-                        ↑           │                       ↘ CERRADA_NO_EFICAZ (+ NC nueva)
+BORRADOR → EMITIDA → ENVIADA → RESPONDIDA → ACEPTADA → CERRADA_SUCURSAL → CERRADA
+                        ↑           │                                   ↘ CERRADA_NO_EFICAZ (+ NC nueva)
                         └───────────┘ descargo observado
-cualquier estado salvo CERRADA* → ANULADA
+EMITIDA / ENVIADA / RESPONDIDA / ACEPTADA → ANULADA      (CERRADA_SUCURSAL ya no se anula)
 ```
+- **ACEPTADA:** el descargo fue aceptado y las acciones están en implementación. Cada acción
+  registra su implementación (fecha real, evidencia, adjunto opcional) con el rol
+  `nc_responder`.
+- **CERRADA_SUCURSAL** (desde 2026-10-05): con **todas** las acciones implementadas, quien
+  tiene `nc_emitir` cierra el caso con la sucursal. Se congela un **acta de cierre** (HTML
+  con sha256, igual que la emisión) que se descarga en HTML/PDF y se envía por mail (evento
+  `ACTA_CIERRE_ENVIADA`, no cambia el estado). El acta lleva el descargo aceptado, la
+  implementación de cada acción, las aclaraciones de cierre (texto libre), la lista de
+  adjuntos con su huella y la **verificación de eficacia programada** (fecha y criterio).
+- **Por qué cumple ISO 9001 §10.2:** la norma exige revisar la eficacia, no que esa revisión
+  sea el último paso. Las tres condiciones que se respetan son:
+  1. la verificación queda programada al cerrar, con fecha y criterio;
+  2. el estado dice "verificación pendiente" y los KPIs separan "cerradas con la sucursal"
+     de "cerradas eficaces";
+  3. un resultado "no eficaz" genera una NC nueva vinculada.
+
+  El plazo sugerido es `verificacion_dias` por tipo: ROJO 30, NARANJA 60, AMARILLO 90.
+  "⏰ VERIFICACIÓN VENCIDA" aparece en Seguimiento.
+- **EN_VERIFICACION** es un estado heredado y equivale a ACEPTADA. La migración v1 no
+  reescribe esas filas: siguen por el camino nuevo.
 - Las transiciones válidas están en `TRANSICIONES` y **además las impone un trigger SQL**
-  (`nc_transicion`), como segunda barrera.
+  (`nc_transicion`), como segunda barrera. El esquema se versiona con `PRAGMA user_version`
+  (`_migrar`). Cada migración queda en la cadena como evento `ESQUEMA_MIGRADO`.
 - **Escala AMARILLO < NARANJA < ROJO.** El SOP vigente (§8.2) dice Amarillo/Rojo/Negro; se
   le avisó al usuario y decidió mantener esta escala. Es una diferencia conocida y aceptada.
 - El descargo exige corrección inmediata, causa raíz, **categoría 6M** (Método, Mano de
@@ -464,15 +485,15 @@ cualquier estado salvo CERRADA* → ANULADA
   permitidas: al enviar, o al observar el descargo. Hay triggers para cada caso.
 
 ### 6.4 Registro append-only y cadena de hashes
-- `nc_eventos`, `nc_respuesta`, `nc_acciones_correctivas`, `nc_verificacion`,
-  `nc_adjuntos`, `observaciones` y `nc_envios` son **de solo agregado**: los triggers
-  abortan cualquier UPDATE o DELETE.
+- `nc_eventos`, `nc_respuesta`, `nc_acciones_correctivas`, `nc_implementacion`,
+  `nc_cierre`, `nc_verificacion`, `nc_adjuntos`, `observaciones` y `nc_envios` son **de
+  solo agregado**: los triggers abortan cualquier UPDATE o DELETE.
 - Cada evento guarda `hash = sha256(hash_prev + evento_canónico)`. Eso forma una
   **cadena** donde alterar un evento rompe todos los siguientes.
   - `verificar_cadena(proyecto)` recorre la cadena y lista las inconsistencias.
   - `ancla(proyecto)` devuelve el último hash y la cantidad de eventos, para anotarlo
     afuera como testigo.
-  - `verificar_html_emitidos`, `verificar_anexos` y `verificar_adjuntos` comprueban los
+  - `verificar_html_emitidos`, `verificar_actas`, `verificar_anexos` y `verificar_adjuntos` comprueban los
     hashes de los artefactos.
 - Los adjuntos (PDF enviado, evidencias) se guardan en disco con su sha256.
 
@@ -697,3 +718,4 @@ evaluación es cosmético.
 |---|---|---|
 | 2026-10-05 | 1.0 | Primera versión: funcionalidades, límites, decisiones de cálculo, seguridad y compliance de NC, entorno, estado |
 | 2026-10-05 | 1.1 | Enlace a ESTRATEGIA_COMPLIANCE.md; límite conteo móvil / WMS; lectura real de las líneas INV (sin cantidad contada); estado de commits, PRs y branch |
+| 2026-10-05 | 1.2 | NC: cierre con la sucursal antes de verificar (ACEPTADA → CERRADA_SUCURSAL), implementación de acciones, acta de cierre exportable y enviable, migración de esquema versionada |

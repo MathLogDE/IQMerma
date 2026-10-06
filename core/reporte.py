@@ -1605,6 +1605,48 @@ def generar_no_conformidad(proyecto, nc: dict, cfg: dict) -> str:
     )
 
 
+def generar_acta_cierre(proyecto, acta: dict, cfg: dict) -> str:
+    """
+    Acta de cierre de una NC con la sucursal (se congela al cerrar, ver
+    core/no_conformidades.cerrar_con_sucursal). Deja constancia del descargo
+    aceptado, de la implementación de cada acción y de la verificación de
+    eficacia que queda programada. Con autoescape: el texto es carga libre.
+    """
+    from datetime import date as _date
+    from core.no_conformidades import numero_impreso
+
+    def _f(iso):
+        return _date.fromisoformat(iso[:10]).strftime("%d/%m/%Y") if iso else "—"
+
+    env = _env()
+    env.autoescape = True
+    n = acta["nc"]
+    tipos = cfg["tipos"]
+    cerrada = datetime.fromisoformat(acta["cerrada_en"]).strftime("%d/%m/%Y %H:%M")
+    return env.get_template("acta_cierre_nc.html").render(
+        titulo="Acta de cierre de no conformidad",
+        meta={"proyecto": proyecto if isinstance(proyecto, str) else "", "generado": cerrada},
+        branding=cargar_branding(proyecto if isinstance(proyecto, str) else None),
+        logo_iqmerma=LOGO_IQMERMA_URI,
+        acta=acta,
+        nc=n,
+        numero_impreso=numero_impreso(n["numero"]),
+        fecha_nc=_f(n["fecha"]),
+        recepcion=_f(n.get("recepcion_ts")),
+        tipo_color=tipos.get(n["tipo"], {}).get("color", "#999"),
+        acciones=[{**a, "compromiso_txt": _f(a["fecha_compromiso"]),
+                   "real_txt": _f(a["fecha_real"]),
+                   "fuera": a["fecha_real"] > a["fecha_compromiso"]} for a in acta["acciones"]],
+        aceptado_en=_f(acta.get("aceptado_en")),
+        fecha_verificacion=_f(acta["fecha_verificacion_programada"]),
+        adjuntos=[{**a, "fecha_txt": _f(a["subido_en"]), "huella": a["sha256"][:16]}
+                  for a in acta["adjuntos"]],
+        huella_nc=(n.get("sha256_contenido") or "")[:16],
+        huella=acta["sha256_contenido"][:16],
+        cerrada=cerrada,
+    )
+
+
 def vista_anexo(proyecto, anexo: dict) -> str:
     """Un anexo de NC suelto, con los estilos de los reportes (para la vista previa)."""
     env = _env()
