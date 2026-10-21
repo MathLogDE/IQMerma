@@ -27,8 +27,9 @@ _COOKIE_DEFAULT = {"name": "mermaiq_cliente", "expiry_days": 30}
 # este dict, para que nunca queden desincronizados.
 PAGINAS_DISPONIBLES = {
     "General":       ["Inicio"],
-    "Merma":         ["Análisis", "Control de merma", "Avance de inventario",
-                      "Matriz por sucursal", "Transformaciones"],
+    "Merma":         ["Análisis", "Análisis (fechas variables)", "Control de merma",
+                      "Avance de inventario", "Matriz por sucursal",
+                      "Matriz por sucursal (fechas variables)", "Transformaciones"],
     "Inventario":    ["Salud de stock", "Serie de stock", "Cruce por sucursal",
                       "Evolución interanual", "Perfil de reposición",
                       "Pedido desde sucursal", "Pedido general de distribución 2",

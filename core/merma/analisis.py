@@ -72,6 +72,88 @@ from core.comun import (  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
+# Ventanas de fechas por tipo de comprobante
+# ---------------------------------------------------------------------------
+
+# Familias de comprobante (movimientos.tipomov) que pueden llevar su propio
+# período en las páginas "fechas variables". El inventario físico viene como
+# TIPOMOV='AJU', TIPO='INV', así que cae en la ventana AJU.
+TIPOMOV_VENTANAS = ("AJU", "VTA", "REM")
+
+
+def normalizar_ventanas(ventanas: dict | None) -> dict[str, tuple[str, str]] | None:
+    """
+    Valida y normaliza `{tipomov: (desde, hasta)}` a fechas ISO. Exige las
+    tres familias de TIPOMOV_VENTANAS y desde <= hasta en cada una.
+    """
+    if ventanas is None:
+        return None
+    ventanas = dict(ventanas)
+    faltan = [t for t in TIPOMOV_VENTANAS if t not in ventanas]
+    if faltan:
+        raise ValueError(f"Faltan las ventanas de: {', '.join(faltan)}")
+    norm = {}
+    for t in TIPOMOV_VENTANAS:
+        d, h = ventanas[t]
+        d, h = str(pd.to_datetime(d).date()), str(pd.to_datetime(h).date())
+        if d > h:
+            raise ValueError(f"Ventana {t}: desde ({d}) no puede ser posterior a hasta ({h})")
+        norm[t] = (d, h)
+    return norm
+
+
+def _filtro_fechas(desde: str | None, hasta: str | None,
+                   ventanas: dict[str, tuple[str, str]] | None = None
+                   ) -> tuple[str, dict]:
+    """
+    Condición SQL de fechas sobre `movimientos` (sin alias) y sus params.
+    Sin `ventanas`: rango único. Con `ventanas` (ya normalizadas): cada
+    tipomov en su propio rango; un tipomov fuera de TIPOMOV_VENTANAS queda
+    afuera.
+    """
+    if not ventanas:
+        return ("fecha >= $desde::DATE AND fecha <= $hasta::DATE",
+                {"desde": desde, "hasta": hasta})
+    partes, params = [], {}
+    for t, (d, h) in ventanas.items():
+        k = t.lower()
+        partes.append(f"(tipomov = '{t}' AND fecha >= ${k}_d::DATE AND fecha <= ${k}_h::DATE)")
+        params[f"{k}_d"], params[f"{k}_h"] = d, h
+    return "(" + " OR ".join(partes) + ")", params
+
+
+def _tipomov_fuera(conn, ventanas: dict[str, tuple[str, str]] | None,
+                   codigodepo: list[str] | str | None) -> dict[str, int]:
+    """
+    Movimientos que ninguna ventana toma por tener un tipomov fuera de
+    TIPOMOV_VENTANAS, dentro de los extremos de las ventanas: {tipomov: n}.
+    Vacío sin ventanas (en rango único no se deja nada afuera).
+    """
+    if not ventanas:
+        return {}
+    desde, hasta = _extremos(ventanas)
+    depos = [codigodepo] if isinstance(codigodepo, str) else list(codigodepo or [])
+    filtro_depo = "AND codigodepo IN (SELECT unnest($depos))" if depos else ""
+    params = {"desde": desde, "hasta": hasta, "tipos": list(TIPOMOV_VENTANAS)}
+    if depos:
+        params["depos"] = depos
+    filas = conn.execute(f"""
+        SELECT COALESCE(tipomov, '(vacío)'), COUNT(*) FROM movimientos
+        WHERE fecha >= $desde::DATE AND fecha <= $hasta::DATE
+          AND (tipomov IS NULL OR tipomov NOT IN (SELECT unnest($tipos)))
+          {filtro_depo}
+        GROUP BY 1
+    """, params).fetchall()
+    return {t: int(n) for t, n in filas}
+
+
+def _extremos(ventanas: dict[str, tuple[str, str]]) -> tuple[str, str]:
+    """Mínimo desde y máximo hasta entre las ventanas."""
+    return (min(d for d, _ in ventanas.values()),
+            max(h for _, h in ventanas.values()))
+
+
+# ---------------------------------------------------------------------------
 # Ensamblado (pandas)
 # ---------------------------------------------------------------------------
 
@@ -188,6 +270,7 @@ def calcular_merma(
     fecha_hasta: str,
     modo_valorizacion: str = "costo",
     fecha_valorizacion: str | None = None,
+    ventanas: dict[str, tuple[str, str]] | None = None,
 ) -> pd.DataFrame:
     """
     Calcula merma por SKU para una sucursal, varias, o todas, en un rango de
@@ -205,17 +288,28 @@ def calcular_merma(
         fecha_valorizacion: Fecha del snapshot de stock a usar para valorizar
                             (se toma el más reciente <= esa fecha). None =
                             último snapshot disponible (valor actual).
+        ventanas:           opcional, `{"AJU": (desde, hasta), "VTA": (...),
+                            "REM": (...)}`: cada familia de comprobante
+                            (movimientos.tipomov) con su propio período. Si se
+                            pasa, fecha_desde/fecha_hasta se ignoran (pueden
+                            ser None) y las columnas fecha_desde/fecha_hasta
+                            toman el mínimo/máximo de las ventanas.
 
     Returns:
         DataFrame ancho (una fila por SKU). `df.attrs["categorias"]` lista las
-        columnas-categoría; `df.attrs["fecha_valorizacion"]` es el snapshot usado.
+        columnas-categoría; `df.attrs["fecha_valorizacion"]` es el snapshot usado;
+        `df.attrs["ventanas"]` las ventanas usadas (None en rango único).
     """
     validar_modo_valorizacion(modo_valorizacion, MODOS_VALORIZACION_MERMA)
 
-    desde = str(pd.to_datetime(fecha_desde).date())
-    hasta = str(pd.to_datetime(fecha_hasta).date())
-    if desde > hasta:
-        raise ValueError(f"fecha_desde ({desde}) no puede ser posterior a fecha_hasta ({hasta})")
+    ventanas = normalizar_ventanas(ventanas)
+    if ventanas:
+        desde, hasta = _extremos(ventanas)
+    else:
+        desde = str(pd.to_datetime(fecha_desde).date())
+        hasta = str(pd.to_datetime(fecha_hasta).date())
+        if desde > hasta:
+            raise ValueError(f"fecha_desde ({desde}) no puede ser posterior a fecha_hasta ({hasta})")
 
     conn = conectar(proyecto)
     try:
@@ -225,7 +319,7 @@ def calcular_merma(
         if codigodepo:
             depos = [codigodepo] if isinstance(codigodepo, str) else list(codigodepo)
         filtro_depo = "AND codigodepo IN (SELECT unnest($depos))" if depos else ""
-        params = {"desde": desde, "hasta": hasta}
+        filtro_fecha, params = _filtro_fechas(desde, hasta, ventanas)
         if depos:
             params["depos"] = depos
 
@@ -233,8 +327,7 @@ def calcular_merma(
             WITH rango AS (
                 SELECT codigo, tipo, SUM(diferencia) AS neto_unidades
                 FROM movimientos
-                WHERE fecha >= $desde::DATE
-                  AND fecha <= $hasta::DATE
+                WHERE {filtro_fecha}
                   {filtro_depo}
                 GROUP BY codigo, tipo
             )
@@ -278,15 +371,18 @@ def calcular_merma(
         # diferencia (neto 0) sigue siendo un SKU contado.
         codigos_inv = conn.execute(f"""
             SELECT DISTINCT codigo FROM movimientos
-            WHERE tipo = 'INV' AND fecha >= $desde::DATE AND fecha <= $hasta::DATE
+            WHERE tipo = 'INV' AND {filtro_fecha}
               {filtro_depo}
         """, params).df()["codigo"]
+        tipomov_fuera = _tipomov_fuera(conn, ventanas, depos)
     finally:
         conn.close()
 
     df = _ensamblar(df_comp, df_val, df_art, df_est, cats_orden,
                     modo_valorizacion, desde, hasta)
     df.attrs["fecha_valorizacion"] = fv_usada
+    df.attrs["ventanas"] = ventanas
+    df.attrs["tipomov_fuera"] = tipomov_fuera
     df["tuvo_inv"] = df["codigo"].isin(set(codigos_inv))
     skus_inv = int(df["tuvo_inv"].sum())
     df.attrs["skus_inv"] = skus_inv
@@ -395,18 +491,20 @@ def _orden_categorias(conn) -> list[str]:
 
 
 def _componentes_sucursal(conn, desde: str, hasta: str,
-                          codigodepo: list[str] | str | None
+                          codigodepo: list[str] | str | None,
+                          ventanas: dict[str, tuple[str, str]] | None = None,
                           ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Neto por (codigodepo, codigo, categoria, es_merma, es_venta) en el rango,
     y los pares (codigodepo, codigo) con conteo de inventario (tipo='INV',
     siempre por tipo, nunca tipomov — mismo criterio que calcular_merma).
+    Con `ventanas` (normalizadas), cada tipomov usa su propio rango.
     """
     depos = None
     if codigodepo:
         depos = [codigodepo] if isinstance(codigodepo, str) else list(codigodepo)
     filtro_depo = "AND codigodepo IN (SELECT unnest($depos))" if depos else ""
-    params = {"desde": desde, "hasta": hasta}
+    filtro_fecha, params = _filtro_fechas(desde, hasta, ventanas)
     if depos:
         params["depos"] = depos
 
@@ -414,7 +512,7 @@ def _componentes_sucursal(conn, desde: str, hasta: str,
         WITH rango AS (
             SELECT codigodepo, codigo, tipo, SUM(diferencia) AS neto_unidades
             FROM movimientos
-            WHERE fecha >= $desde::DATE AND fecha <= $hasta::DATE
+            WHERE {filtro_fecha}
               {filtro_depo}
             GROUP BY 1, 2, 3
         )
@@ -430,7 +528,7 @@ def _componentes_sucursal(conn, desde: str, hasta: str,
 
     df_inv = conn.execute(f"""
         SELECT DISTINCT codigodepo, codigo FROM movimientos
-        WHERE tipo = 'INV' AND fecha >= $desde::DATE AND fecha <= $hasta::DATE
+        WHERE tipo = 'INV' AND {filtro_fecha}
           {filtro_depo}
     """, params).df()
     return df_g, df_inv
@@ -444,6 +542,7 @@ def merma_por_sucursal(
     fecha_valorizacion: str | None = None,
     codigos: list[str] | None = None,
     codigodepo: list[str] | str | None = None,
+    ventanas: dict[str, tuple[str, str]] | None = None,
 ) -> pd.DataFrame:
     """
     Comparativa agregada por sucursal para un rango de fechas: una fila por
@@ -458,6 +557,8 @@ def merma_por_sucursal(
         codigodepo: sucursal, lista de sucursales, o None = todas — para
                     acotar la comparativa al mismo subconjunto elegido en
                     la página.
+        ventanas:   opcional, un período por tipomov (ver calcular_merma);
+                    si se pasa, fecha_desde/fecha_hasta se ignoran.
 
     Returns:
         DataFrame: codigodepo, nombre, skus, skus_con_merma, skus_inv,
@@ -467,12 +568,16 @@ def merma_por_sucursal(
         attrs: "categorias", "fecha_valorizacion".
     """
     validar_modo_valorizacion(modo_valorizacion, MODOS_VALORIZACION_MERMA)
-    desde = str(pd.to_datetime(fecha_desde).date())
-    hasta = str(pd.to_datetime(fecha_hasta).date())
+    ventanas = normalizar_ventanas(ventanas)
+    if ventanas:
+        desde, hasta = _extremos(ventanas)
+    else:
+        desde = str(pd.to_datetime(fecha_desde).date())
+        hasta = str(pd.to_datetime(fecha_hasta).date())
 
     conn = conectar(proyecto)
     try:
-        df_g, df_inv = _componentes_sucursal(conn, desde, hasta, codigodepo)
+        df_g, df_inv = _componentes_sucursal(conn, desde, hasta, codigodepo, ventanas)
         df_val = precios_snapshot(conn, fecha_valorizacion)
         fv_usada = snapshot_usado(conn, fecha_valorizacion)
 
@@ -500,6 +605,72 @@ NIVELES_MATRIZ = ("rubro", "gran_super_rubro", "marca", "codigo")
 TOTAL_MATRIZ = "Total"
 
 
+def _stock_previo_inv(conn, ventanas: dict[str, tuple[str, str]],
+                      codigodepo: list[str] | str | None,
+                      fecha_snapshot: str | None) -> pd.DataFrame:
+    """
+    Stock que tenía el sistema justo antes de cada línea de inventario físico
+    (tipo='INV') de la ventana AJU: una fila por línea, con o sin diferencia
+    (10→8 da 10; 10→10 también da 10). Si un SKU se contó dos veces, trae
+    las dos.
+
+    Misma reconstrucción que core.inventario.series.serie_stock (snapshot +
+    acumulado(d) − acumulado(snapshot)), pero por línea: dentro de un día el
+    orden lo da `id` (orden de ingesta; el ERP no informa la hora). Un par
+    sin fila en el snapshot arranca en 0. Sin recorte de negativos.
+
+    Returns:
+        DataFrame: codigodepo, codigo, stock_previo.
+    """
+    cols = ["codigodepo", "codigo", "stock_previo"]
+    if not ventanas or not fecha_snapshot:
+        return pd.DataFrame(columns=cols)
+    d, h = ventanas["AJU"]
+    depos = [codigodepo] if isinstance(codigodepo, str) else list(codigodepo or [])
+    filtro_depo = "AND codigodepo IN (SELECT unnest($depos))" if depos else ""
+    params = {"d": d, "h": h, "fs": fecha_snapshot}
+    if depos:
+        params["depos"] = depos
+    return conn.execute(f"""
+        WITH pares AS (
+            SELECT DISTINCT codigodepo, codigo FROM movimientos
+            WHERE tipo = 'INV' AND tipomov = 'AJU'
+              AND fecha >= $d::DATE AND fecha <= $h::DATE
+              {filtro_depo}
+        ),
+        mov AS (
+            SELECT m.codigodepo, m.codigo, m.fecha, m.tipo, m.tipomov,
+                   m.diferencia::DOUBLE AS dif,
+                   SUM(m.diferencia) OVER w ::DOUBLE AS acum,
+                   ROW_NUMBER() OVER w AS orden
+            FROM movimientos m
+            JOIN pares p ON m.codigodepo = p.codigodepo AND m.codigo = p.codigo
+            WINDOW w AS (PARTITION BY m.codigodepo, m.codigo ORDER BY m.fecha, m.id
+                         ROWS UNBOUNDED PRECEDING)
+        ),
+        snap AS (
+            SELECT ss.codigodepo, ss.codigo, SUM(ss.stock)::DOUBLE AS stock_snap
+            FROM stock_sucursal ss
+            JOIN pares p ON ss.codigodepo = p.codigodepo AND ss.codigo = p.codigo
+            WHERE ss.fecha_snapshot = $fs::DATE
+            GROUP BY 1, 2
+        ),
+        -- acumulado al día del snapshot (arg_max por orden: la suma no es monótona)
+        acum_fs AS (
+            SELECT codigodepo, codigo, arg_max(acum, orden) AS acum_fs
+            FROM mov WHERE fecha <= $fs::DATE GROUP BY 1, 2
+        )
+        SELECT m.codigodepo, m.codigo,
+               COALESCE(s.stock_snap, 0) + m.acum - COALESCE(a.acum_fs, 0) - m.dif
+                   AS stock_previo
+        FROM mov m
+        LEFT JOIN snap s ON m.codigodepo = s.codigodepo AND m.codigo = s.codigo
+        LEFT JOIN acum_fs a ON m.codigodepo = a.codigodepo AND m.codigo = a.codigo
+        WHERE m.tipo = 'INV' AND m.tipomov = 'AJU'
+          AND m.fecha >= $d::DATE AND m.fecha <= $h::DATE
+    """, params).df()[cols]
+
+
 def merma_matriz_sucursal(
     proyecto: str,
     fecha_desde: str,
@@ -509,6 +680,8 @@ def merma_matriz_sucursal(
     codigos: list[str] | None = None,
     modo_valorizacion: str = "costo",
     fecha_valorizacion: str | None = None,
+    ventanas: dict[str, tuple[str, str]] | None = None,
+    incluir_stock_inicial: bool = False,
 ) -> pd.DataFrame:
     """
     Por cada valor de `nivel` (rubro, gran super rubro, marca o SKU) y cada
@@ -526,6 +699,12 @@ def merma_matriz_sucursal(
         nivel:      uno de NIVELES_MATRIZ ("codigo" = una fila por SKU).
         codigodepo: sucursal, lista, o None = todas.
         codigos:    SKUs a incluir (filtros de catálogo de la UI). None = todos.
+        ventanas:   opcional, un período por tipomov (ver calcular_merma);
+                    si se pasa, fecha_desde/fecha_hasta se ignoran.
+        incluir_stock_inicial: suma las métricas "Stock inicial u/$": el
+                    stock del sistema justo antes de cada línea INV de la
+                    ventana AJU (ver _stock_previo_inv), valorizado como
+                    inventario/ajustes. Requiere `ventanas`.
 
     Returns:
         DataFrame largo: nivel_valor, codigodepo, metrica, valor. codigodepo
@@ -540,16 +719,26 @@ def merma_matriz_sucursal(
     if nivel not in NIVELES_MATRIZ:
         raise ValueError(f"nivel debe ser uno de {NIVELES_MATRIZ}, no '{nivel}'")
     validar_modo_valorizacion(modo_valorizacion, MODOS_VALORIZACION_MERMA)
-    desde = str(pd.to_datetime(fecha_desde).date())
-    hasta = str(pd.to_datetime(fecha_hasta).date())
-    if desde > hasta:
-        raise ValueError(f"fecha_desde ({desde}) no puede ser posterior a fecha_hasta ({hasta})")
+    ventanas = normalizar_ventanas(ventanas)
+    if ventanas:
+        desde, hasta = _extremos(ventanas)
+    else:
+        desde = str(pd.to_datetime(fecha_desde).date())
+        hasta = str(pd.to_datetime(fecha_hasta).date())
+        if desde > hasta:
+            raise ValueError(f"fecha_desde ({desde}) no puede ser posterior a fecha_hasta ({hasta})")
+    if incluir_stock_inicial and not ventanas:
+        raise ValueError("incluir_stock_inicial requiere ventanas (la ventana AJU "
+                         "define qué conteos entran)")
 
     conn = conectar(proyecto)
     try:
-        df_g, df_inv = _componentes_sucursal(conn, desde, hasta, codigodepo)
+        df_g, df_inv = _componentes_sucursal(conn, desde, hasta, codigodepo, ventanas)
+        tipomov_fuera = _tipomov_fuera(conn, ventanas, codigodepo)
         df_val = precios_snapshot(conn, fecha_valorizacion)
         fv_usada = snapshot_usado(conn, fecha_valorizacion)
+        df_stk = (_stock_previo_inv(conn, ventanas, codigodepo, fv_usada)
+                  if incluir_stock_inicial else None)
         cats_merma = [
             r[0] for r in conn.execute("""
                 SELECT categoria FROM tipos_categoria WHERE es_merma
@@ -563,15 +752,20 @@ def merma_matriz_sucursal(
     if codigos is not None:
         df_g = df_g[df_g["codigo"].isin(set(codigos))]
         df_inv = df_inv[df_inv["codigo"].isin(set(codigos))]
+        if df_stk is not None:
+            df_stk = df_stk[df_stk["codigo"].isin(set(codigos))]
 
     metricas = ([x for c in cats_merma for x in (f"{c} u", f"{c} $")]
-                + ["SKUs inv.", "Venta u", "Venta $"])
+                + ["SKUs inv."]
+                + (["Stock inicial u", "Stock inicial $"] if incluir_stock_inicial else [])
+                + ["Venta u", "Venta $"])
     if depos_sel := ([codigodepo] if isinstance(codigodepo, str) else list(codigodepo or [])):
         sucursales = sorted(depos_sel)
     else:
         sucursales = sorted(df_g["codigodepo"].unique())
     attrs = dict(nivel=nivel, metricas=metricas, sucursales=sucursales,
-                 fecha_valorizacion=fv_usada, descripciones={},
+                 fecha_valorizacion=fv_usada, descripciones={}, ventanas=ventanas,
+                 tipomov_fuera=tipomov_fuera,
                  categorias_merma=cats_merma, skus_activos={})
 
     if df_g.empty:
@@ -619,6 +813,21 @@ def merma_matriz_sucursal(
     si = df_inv.groupby(claves)["codigo"].nunique().rename("valor").reset_index()
     si["metrica"] = "SKUs inv."
     partes.append(si)
+
+    # Stock inicial: saldo del sistema antes de cada conteo, sumado por
+    # (nivel, sucursal) y en el total. Valorizado como inventario/ajustes.
+    if df_stk is not None and not df_stk.empty:
+        df_stk = _nivel(df_stk)
+        # sin es_venta: en modo mixto resuelve a costo, como inventario/ajustes
+        df_stk["valor"] = df_stk["stock_previo"] * precio_unitario_fila(
+            df_stk["codigo"], modo_valorizacion, df_val)
+        df_stk = pd.concat([df_stk, df_stk.assign(codigodepo=TOTAL_MATRIZ)],
+                           ignore_index=True)
+        gs = df_stk.groupby(claves)[["stock_previo", "valor"]].sum()
+        for col, nombre in (("stock_previo", "Stock inicial u"), ("valor", "Stock inicial $")):
+            p = gs[col].rename("valor").reset_index()
+            p["metrica"] = nombre
+            partes.append(p)
 
     v = df_g[df_g["es_venta"]]
     if not v.empty:

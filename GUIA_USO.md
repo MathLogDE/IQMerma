@@ -221,6 +221,26 @@ actualizan con el filtro.
 
 > El **universo de SKUs** son los que tuvieron algún movimiento en el rango.
 
+### Páginas con fechas variables
+
+**Análisis (fechas variables)** y **Matriz por sucursal (fechas variables)**
+son iguales a sus páginas gemelas, salvo que en lugar de un único Desde/Hasta
+piden **un período por tipo de comprobante**:
+
+- **AJU — Inventario y ajustes** (INV, CS, TR): de acá sale la merma y el % de
+  SKUs contados.
+- **VTA — Ventas**: de acá sale la venta, que es el denominador del %.
+- **REM — Remitos y dif. de camión**: columnas informativas.
+
+Por ejemplo, se puede tomar el inventario de septiembre contra la venta del
+trimestre.
+
+La matriz con fechas variables suma además el grupo **Stock inicial** (u y $).
+Es el stock que tenía el sistema justo antes de cada conteo INV de la ventana
+AJU, haya tenido diferencia o no: si un SKU pasó de 10 a 8 suma 10, y si pasó
+de 10 a 10 también suma 10. Se puede ocultar desde "Mostrar". El imprimible y el Excel muestran los tres períodos. Las páginas
+originales no cambian, y cada página guarda su propio resultado.
+
 ### Página Control de merma
 
 Auditoría de la merma en tres vistas (mismos controles de período y

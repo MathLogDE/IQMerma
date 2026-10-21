@@ -1,6 +1,6 @@
 # IQMerma — Documento de referencia
 
-> **Versión del documento:** 1.2 · **Fecha:** 2026-10-05 · **Base:** branch `desarrollo-compliance`
+> **Versión del documento:** 1.4 · **Fecha:** 2026-10-12 · **Base:** branch `desarrollo-compliance`
 > (sale de `visualizaciones` @ `bbaf0f9`). La estrategia hacia ISO 9001 / Lean Six Sigma está en
 > [ESTRATEGIA_COMPLIANCE.md](ESTRATEGIA_COMPLIANCE.md).
 >
@@ -168,6 +168,7 @@ Estado: ✅ en uso · 🧪 en prueba · 🔒 solo admin.
 | Control de merma | Evolución mensual, movimientos outlier por impacto $, ranking de ajustes por usuario o motivo (control de errores y fraude) | `core/merma/control.py` | ✅ |
 | Avance de inventario | ¿Qué tan avanzado está el conteo físico por sucursal y rubro? Unidades contadas y diferencia | `core/merma/avance.py` | ✅ |
 | Matriz por sucursal | Diferencias de inventario y ajustes (u y $), SKUs inventariados y venta por rubro/marca/SKU × sucursal. Export Excel | `core/merma/analisis.py` | ✅ |
+| Análisis / Matriz por sucursal (fechas variables) | Lo mismo que Análisis y Matriz, pero con un período propio por familia de comprobante (AJU, VTA, REM). Ver §5.1 | `core/merma/analisis.py` (`ventanas=`) | ✅ |
 | Transformaciones | Detalle línea a línea de las TR: baja del SKU original y alta del SKU de liquidación | `core/merma/transformaciones.py` | ✅ |
 | Últimos movimientos | Fecha del último movimiento de cada tipo de comprobante, por SKU, en una sucursal | `core/merma/ultimos_movimientos.py` | ✅ 🔒 |
 
@@ -279,6 +280,22 @@ Formato: **qué** → **por qué** → *dónde*.
 - **Universo de SKUs:** los que tienen algún movimiento en el rango y la sucursal.
 - **Anclaje:** por **selección de período** (sucursal + rango). No hay un "evento de
   conteo" (refactor v2, MIGRACION_V2).
+- **Fechas variables:** las páginas "(fechas variables)" aceptan un período por
+  `movimientos.tipomov`: **AJU** (INV, CS, TR → la merma y el % de SKUs contados), **VTA**
+  (la venta) y **REM** (remitos y MD, informativos). Las fórmulas no cambian; solo cambia
+  qué movimientos entran. El universo de SKUs es la unión de las tres ventanas. Un tipomov
+  que no sea uno de esos tres queda afuera, y la página lo avisa. Se filtra por `tipomov`
+  (no por la categoría) porque en el ERP viene limpio: INV llega como AJU.
+  → Permite medir, por ejemplo, la merma de un mes de inventario contra la venta de un
+  trimestre. *`core/merma/analisis.py::_filtro_fechas`*
+- **Stock inicial (solo en la Matriz con fechas variables):** por cada línea INV de la
+  ventana AJU, el stock que tenía el sistema justo antes del conteo, con o sin diferencia:
+  10→8 suma 10, y 10→10 también suma 10. Si un SKU se contó dos veces, suma los dos
+  saldos, igual que se suman sus dos diferencias. Se reconstruye como en la serie de
+  stock (snapshot de valorización + acumulado); dentro de un día, el orden lo da el `id`
+  (orden de ingesta). Va en u y $ (en modo mixto, a costo), sin recortar negativos.
+  → Es la base para calcular la merma sobre el stock contado.
+  *`core/merma/analisis.py::_stock_previo_inv`*
 
 ### 5.2 Valorización: siempre desde el snapshot de stock
 - Unidades × `costo` o × `lista_1` del snapshot más reciente ≤ `fecha_hasta` (o el que se
@@ -719,3 +736,5 @@ evaluación es cosmético.
 | 2026-10-05 | 1.0 | Primera versión: funcionalidades, límites, decisiones de cálculo, seguridad y compliance de NC, entorno, estado |
 | 2026-10-05 | 1.1 | Enlace a ESTRATEGIA_COMPLIANCE.md; límite conteo móvil / WMS; lectura real de las líneas INV (sin cantidad contada); estado de commits, PRs y branch |
 | 2026-10-05 | 1.2 | NC: cierre con la sucursal antes de verificar (ACEPTADA → CERRADA_SUCURSAL), implementación de acciones, acta de cierre exportable y enviable, migración de esquema versionada |
+| 2026-10-12 | 1.3 | Páginas "Análisis (fechas variables)" y "Matriz por sucursal (fechas variables)": un período por AJU / VTA / REM (§3, §5.1). Diferencias de camión: neto = sobrante − faltante |
+| 2026-10-12 | 1.4 | Matriz con fechas variables: métrica "Stock inicial" u/$ (stock del sistema antes de cada INV de la ventana AJU, §5.1) |

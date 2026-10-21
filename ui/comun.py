@@ -32,7 +32,7 @@ from core.merma.analisis import (
     calcular_merma, merma_por_sucursal,
     calcular_merma_dinamica, merma_por_sucursal_dinamica,
     fechas_corte_comprobante,
-    merma_matriz_sucursal, NIVELES_MATRIZ, TOTAL_MATRIZ,
+    merma_matriz_sucursal, NIVELES_MATRIZ, TOTAL_MATRIZ, TIPOMOV_VENTANAS,
 )
 from core.merma.avance import (
     avance_matriz, avance_conteo, NIVELES_AVANCE, METODOS_DENOMINADOR,
@@ -918,13 +918,16 @@ def botones_descarga(df: pd.DataFrame, nombre: str, key: str) -> None:
 def comparativa_cacheada(proyecto: str, fecha_desde: str, fecha_hasta: str,
                          modo_valorizacion: str, fecha_valorizacion,
                          codigos: tuple | None,
-                         codigodepo: tuple | None = None) -> pd.DataFrame:
+                         codigodepo: tuple | None = None,
+                         ventanas: tuple | None = None) -> pd.DataFrame:
+    """`ventanas`: salida de ventanas_tupla (hasheable) o None = rango único."""
     return merma_por_sucursal(
         proyecto, fecha_desde, fecha_hasta,
         modo_valorizacion=modo_valorizacion,
         fecha_valorizacion=fecha_valorizacion,
         codigos=list(codigos) if codigos is not None else None,
         codigodepo=list(codigodepo) if codigodepo is not None else None,
+        ventanas={t: (d, h) for t, d, h in ventanas} if ventanas else None,
     )
 
 
@@ -980,13 +983,18 @@ def avance_matriz_cacheada(proyecto: str, fecha_desde: str, fecha_hasta: str,
 def merma_matriz_cacheada(proyecto: str, fecha_desde: str, fecha_hasta: str,
                           nivel: str, modo_valorizacion: str, fecha_valorizacion,
                           codigos: tuple | None,
-                          codigodepo: tuple | None = None) -> pd.DataFrame:
+                          codigodepo: tuple | None = None,
+                          ventanas: tuple | None = None,
+                          incluir_stock_inicial: bool = False) -> pd.DataFrame:
+    """`ventanas`: salida de ventanas_tupla (hasheable) o None = rango único."""
     return merma_matriz_sucursal(
         proyecto, fecha_desde, fecha_hasta, nivel,
         codigodepo=list(codigodepo) if codigodepo is not None else None,
         codigos=list(codigos) if codigos is not None else None,
         modo_valorizacion=modo_valorizacion,
         fecha_valorizacion=fecha_valorizacion,
+        ventanas={t: (d, h) for t, d, h in ventanas} if ventanas else None,
+        incluir_stock_inicial=incluir_stock_inicial,
     )
 
 
@@ -1137,3 +1145,81 @@ def controles_periodo(proyecto: str, key_prefix: str,
         "modo_valorizacion": modo_val,
         "fecha_valorizacion": fecha_val,
     }
+
+
+ETIQUETAS_VENTANA = {
+    "AJU": "AJU — Inventario y ajustes",
+    "VTA": "VTA — Ventas",
+    "REM": "REM — Remitos y dif. de camión",
+}
+
+
+def controles_periodo_variable(proyecto: str, key_prefix: str,
+                               modos: list[str] | None = None):
+    """
+    Como controles_periodo, pero con un período Desde/Hasta por familia de
+    comprobante (TIPOMOV_VENTANAS: AJU, VTA, REM). Por defecto las tres
+    ventanas cubren todo el histórico.
+
+    Returns:
+        {"ventanas": {tipomov: (desde, hasta)}, "fecha_desde" / "fecha_hasta"
+        (extremos de las ventanas), "modo_valorizacion", "fecha_valorizacion"}
+        o None si no hay datos o alguna ventana está invertida.
+    """
+    modos = list(modos) if modos else list(MODOS_VALORIZACION)
+    fmin, fmax = rango_disponible(proyecto)
+    if fmin is None:
+        st.info("No hay movimientos cargados todavía.")
+        return None
+
+    ventanas, invertidas = {}, []
+    for t in TIPOMOV_VENTANAS:
+        c0, c1, c2 = st.columns([2, 1, 1])
+        c0.markdown(f"**{ETIQUETAS_VENTANA.get(t, t)}**")
+        d = c1.date_input("Desde", value=fmin, min_value=fmin, max_value=fmax,
+                          key=f"{key_prefix}_{t}_desde")
+        h = c2.date_input("Hasta", value=fmax, min_value=fmin, max_value=fmax,
+                          key=f"{key_prefix}_{t}_hasta")
+        if d > h:
+            invertidas.append(t)
+        ventanas[t] = (str(d), str(h))
+
+    snapshots = listar_fechas_valorizacion(proyecto)
+    v1, v2 = st.columns(2)
+    with v1:
+        modo_val = st.selectbox(
+            "Valorización", modos,
+            format_func=lambda x: ETIQUETAS_MODO_VALORIZACION.get(x, x),
+            key=f"{key_prefix}_modo",
+        )
+    with v2:
+        if snapshots:
+            fecha_val = st.selectbox(
+                "Valorizar al (snapshot)", snapshots,
+                key=f"{key_prefix}_fval",
+                help="Fecha del stock con la que se valoriza. Default: el más reciente.",
+            )
+        else:
+            fecha_val = None
+            st.warning("Sin snapshots de stock — no se puede valorizar.")
+
+    if invertidas:
+        st.error("'Desde' posterior a 'Hasta' en: " + ", ".join(invertidas))
+        return None
+    return {
+        "ventanas": ventanas,
+        "fecha_desde": min(d for d, _ in ventanas.values()),
+        "fecha_hasta": max(h for _, h in ventanas.values()),
+        "modo_valorizacion": modo_val,
+        "fecha_valorizacion": fecha_val,
+    }
+
+
+def ventanas_tupla(ventanas: dict | None) -> tuple | None:
+    """{tipomov: (desde, hasta)} → tupla hasheable para st.cache_data."""
+    return tuple((t, d, h) for t, (d, h) in ventanas.items()) if ventanas else None
+
+
+def texto_ventanas(ventanas: dict, sep: str = " · ") -> str:
+    """'AJU 2026-09-01 → 2026-09-30 · VTA ... · REM ...'"""
+    return sep.join(f"{t} {d} → {h}" for t, (d, h) in ventanas.items())

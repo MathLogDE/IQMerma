@@ -2,7 +2,8 @@
 
 {% block metadatos %}
     <span>Alcance: <b>{{ meta.sucursal }}</b></span>
-    <span>Período: <b>{{ meta.fecha_desde }} → {{ meta.fecha_hasta }}</b></span>
+    {% if meta.ventanas %}<span>Períodos por comprobante: <b>{{ meta.ventanas }}</b></span>
+    {% else %}<span>Período: <b>{{ meta.fecha_desde }} → {{ meta.fecha_hasta }}</b></span>{% endif %}
     {% if meta.fecha_corte_moda %}<span>Corte más frecuente: <b>{{ meta.fecha_corte_moda }}</b></span>{% endif %}
     <span>Valorización: <b>{{ meta.modo }}</b> (stock del <b>{{ meta.fecha_valorizacion }}</b>)</span>
     {% if meta.filtros %}<span>Filtros: <b>{{ meta.filtros }}</b></span>{% endif %}

@@ -111,9 +111,11 @@ SECCIONES = {seccion: paginas for seccion, paginas in SECCIONES.items() if pagin
 RENDER = {
     "Inicio":            inicio.render,
     "Análisis":          merma_analisis.render,
+    "Análisis (fechas variables)": lambda p: merma_analisis.render(p, fechas_variables=True),
     "Control de merma":  merma_control.render,
     "Avance de inventario": merma_avance.render,
     "Matriz por sucursal": merma_matriz.render,
+    "Matriz por sucursal (fechas variables)": lambda p: merma_matriz.render(p, fechas_variables=True),
     "Transformaciones":  merma_transformaciones.render,
     "Salud de stock":    inventario_salud.render,
     "Serie de stock":    inventario_series.render,

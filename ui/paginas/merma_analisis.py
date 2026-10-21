@@ -1,4 +1,9 @@
-"""ui/paginas/merma_analisis.py — Página Análisis (Detalle / Comparativa / Rubros)"""
+"""ui/paginas/merma_analisis.py — Página Análisis (Detalle / Comparativa / Rubros)
+
+También sirve la página "Análisis (fechas variables)": render(...,
+fechas_variables=True) pide un período por familia de comprobante (AJU, VTA,
+REM) en vez de un rango único, y guarda su estado con el prefijo "fv_" para
+no pisar el de la página Análisis."""
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -6,8 +11,14 @@ import plotly.graph_objects as go
 from ui.comun import *  # noqa: F401,F403
 
 
-def render(proyecto):
-    st.title("Análisis de merma")
+def render(proyecto, fechas_variables: bool = False):
+    # Prefijo de las claves de session_state/widgets: las dos páginas
+    # conviven en la misma sesión sin pisarse el resultado.
+    def k(clave: str) -> str:
+        return f"fv_{clave}" if fechas_variables else clave
+
+    st.title("Análisis de merma (fechas variables)" if fechas_variables
+             else "Análisis de merma")
 
     sucursales = listar_sucursales(proyecto)
     if sucursales.empty:
@@ -17,16 +28,47 @@ def render(proyecto):
     suc_largo, _ = etiquetas_sucursal(sucursales)
     suc_sel = st.multiselect(
         "Sucursales (vacío = todas)", sucursales["codigodepo"].tolist(),
-        format_func=lambda c: suc_largo.get(c, str(c)), key="analisis_sucs",
+        format_func=lambda c: suc_largo.get(c, str(c)), key=k("analisis_sucs"),
     )
 
-    modo_periodo = st.radio(
-        "Modo de período", ["Rango de fechas", "Corte dinámico por comprobante"],
-        horizontal=True, key="analisis_modo_periodo",
-        help="El corte dinámico calcula, para cada SKU, su propia fecha de "
-             "inicio: la del N-ésimo comprobante de un tipo elegido (INV, "
-             "NCB, RI, TR...) hacia atrás desde 'Hasta', sin contarlo.",
-    )
+    if fechas_variables:
+        st.caption("Cada familia de comprobante toma movimientos de su propio "
+                   "período: la merma sale de AJU (inventario, ajustes, "
+                   "transformaciones), la venta de VTA y los remitos de REM.")
+        ctrl = controles_periodo_variable(proyecto, k("analisis"),
+                                          modos=list(MODOS_VALORIZACION_MERMA))
+        if ctrl and st.button("Calcular merma", key=k("analisis_btn")):
+            with st.spinner("Calculando..."):
+                try:
+                    depo = suc_sel or None
+                    df = calcular_merma(
+                        proyecto, depo, None, None,
+                        modo_valorizacion=ctrl["modo_valorizacion"],
+                        fecha_valorizacion=ctrl["fecha_valorizacion"],
+                        ventanas=ctrl["ventanas"])
+                    st.session_state[k("df_merma")] = df
+                    st.session_state[k("cats_merma")] = df.attrs.get("categorias", [])
+                    st.session_state[k("fval_merma")] = df.attrs.get("fecha_valorizacion")
+                    st.session_state[k("skus_inv_merma")] = df.attrs.get("skus_inv")
+                    st.session_state[k("pct_skus_merma")] = df.attrs.get("pct_skus_contados")
+                    st.session_state[k("ctrl_merma")] = ctrl
+                    st.session_state[k("suc_merma")] = suc_sel
+                    st.session_state[k("suc_merma_label")] = (
+                        etiqueta_seleccion_sucursales(suc_sel, suc_largo)
+                    )
+                    st.session_state[k("modo_periodo_calc")] = "variable"
+                    st.session_state[k("dinamico_meta")] = None
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        modo_periodo = None
+    else:
+        modo_periodo = st.radio(
+            "Modo de período", ["Rango de fechas", "Corte dinámico por comprobante"],
+            horizontal=True, key="analisis_modo_periodo",
+            help="El corte dinámico calcula, para cada SKU, su propia fecha de "
+                 "inicio: la del N-ésimo comprobante de un tipo elegido (INV, "
+                 "NCB, RI, TR...) hacia atrás desde 'Hasta', sin contarlo.",
+        )
 
     if modo_periodo == "Rango de fechas":
         ctrl = controles_periodo(proyecto, "analisis", modos=list(MODOS_VALORIZACION_MERMA))
@@ -50,7 +92,7 @@ def render(proyecto):
                     st.session_state["dinamico_meta"] = None
                 except Exception as e:
                     st.error(f"Error: {e}")
-    else:
+    elif modo_periodo == "Corte dinámico por comprobante":
         tipos_df = tipos_movimiento(proyecto)
         etiq_tipo = tipos_df.set_index("tipo")["categoria"]
         fmin, fmax = rango_disponible(proyecto)
@@ -117,23 +159,24 @@ def render(proyecto):
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-    if "df_merma" not in st.session_state:
+    if k("df_merma") not in st.session_state:
         return
 
-    df_full = st.session_state["df_merma"]
-    cats = st.session_state.get("cats_merma", [])
-    fval = st.session_state.get("fval_merma")
-    skus_inv = st.session_state.get("skus_inv_merma")
-    pct_skus_contados = st.session_state.get("pct_skus_merma")
-    ctrl_calc = st.session_state.get("ctrl_merma")
-    modo_periodo_calc = st.session_state.get("modo_periodo_calc", "fijo")
-    dinamico_meta = st.session_state.get("dinamico_meta")
+    df_full = st.session_state[k("df_merma")]
+    cats = st.session_state.get(k("cats_merma"), [])
+    fval = st.session_state.get(k("fval_merma"))
+    skus_inv = st.session_state.get(k("skus_inv_merma"))
+    pct_skus_contados = st.session_state.get(k("pct_skus_merma"))
+    ctrl_calc = st.session_state.get(k("ctrl_merma"))
+    modo_periodo_calc = st.session_state.get(k("modo_periodo_calc"), "fijo")
+    dinamico_meta = st.session_state.get(k("dinamico_meta"))
+    ventanas_calc = (ctrl_calc or {}).get("ventanas") if modo_periodo_calc == "variable" else None
 
     st.markdown("---")
 
     # --- Filtros sobre el resultado (sin recalcular) ------------------------
     st.markdown("#### Filtros")
-    df, _ = filtros_resultado(df_full, "analisis_f")
+    df, _ = filtros_resultado(df_full, k("analisis_f"))
 
     fecha_corte_moda = None
     if modo_periodo_calc == "dinamico" and dinamico_meta and not df.empty:
@@ -168,6 +211,14 @@ def render(proyecto):
                      "se recalcula con los filtros de abajo.")
     if fval:
         st.caption(f"Valorizado con snapshot de stock del **{fval}**")
+    if ventanas_calc:
+        st.caption("Períodos por comprobante: " + texto_ventanas(
+            {t: (f"**{d}**", f"**{h}**") for t, (d, h) in ventanas_calc.items()}))
+        fuera = df_full.attrs.get("tipomov_fuera") or {}
+        if fuera:
+            st.warning("Quedaron afuera movimientos con un tipo de comprobante "
+                       "que no es AJU/VTA/REM: "
+                       + ", ".join(f"{t} ({n:,})" for t, n in fuera.items()))
     if modo_periodo_calc == "dinamico" and dinamico_meta:
         excl = dinamico_meta.get("skus_excluidos", 0)
         pares_excl = dinamico_meta.get("pares_excluidos", 0)
@@ -198,7 +249,7 @@ def render(proyecto):
     # ======================================================================
     with tab_det:
         vista = st.radio("Mostrar", ["Valorizado", "Unidades", "Ambos"],
-                         horizontal=True, key="analisis_vista")
+                         horizontal=True, key=k("analisis_vista"))
 
         cols_base = ["codigo", "descripcion", "rubro"]
         headers   = ["Código", "Descripción", "Rubro"]
@@ -230,7 +281,7 @@ def render(proyecto):
             df_display[c] = df_display[c].apply(f)
         df_display.columns = headers
         st.dataframe(df_display, width="stretch", hide_index=True)
-        botones_descarga(df[cols_base + cols_mostrar], "detalle_merma_sku", "det")
+        botones_descarga(df[cols_base + cols_mostrar], "detalle_merma_sku", k("det"))
 
         if merma_cats and merma_total > 0:
             g1, g2 = st.columns([1, 2])
@@ -296,7 +347,7 @@ def render(proyecto):
             sku_det = st.selectbox(
                 "SKU", opciones_sku,
                 format_func=lambda c: f"{c} — {str(etiqueta_sku.get(c, ''))[:60]}",
-                key="analisis_det_sku")
+                key=k("analisis_det_sku"))
 
             if modo_periodo_calc == "dinamico" and dinamico_meta:
                 cortes_sku = fechas_corte_comprobante(
@@ -339,14 +390,24 @@ def render(proyecto):
                                         "Sucursal", "Diferencia", "Ingreso", "Egreso", "Usuario"]
                     st.dataframe(disp_mov, width="stretch", hide_index=True, height=280)
                     botones_descarga(mov_det, f"movimientos_{sku_det}", "det_mov")
-            elif modo_periodo_calc == "fijo":
+            elif modo_periodo_calc in ("fijo", "variable"):
                 f_desde_det = ctrl_calc["fecha_desde"] if ctrl_calc else None
                 f_hasta_det = ctrl_calc["fecha_hasta"] if ctrl_calc else None
                 if f_desde_det and f_hasta_det:
                     mov_det = movimientos_detalle(
                         proyecto, sku_det, f_desde_det, f_hasta_det,
-                        codigodepo=st.session_state.get("suc_merma") or None)
-                    st.caption(f"Movimientos entre **{f_desde_det}** y **{f_hasta_det}**.")
+                        codigodepo=st.session_state.get(k("suc_merma")) or None)
+                    if ventanas_calc:
+                        # cada línea solo si cae en la ventana de su tipomov
+                        f = pd.to_datetime(mov_det["fecha"])
+                        en_ventana = pd.Series(False, index=mov_det.index)
+                        for t, (d, h) in ventanas_calc.items():
+                            en_ventana |= ((mov_det["tipomov"] == t)
+                                           & (f >= pd.to_datetime(d)) & (f <= pd.to_datetime(h)))
+                        mov_det = mov_det[en_ventana]
+                        st.caption("Movimientos de cada tipo dentro de su período.")
+                    else:
+                        st.caption(f"Movimientos entre **{f_desde_det}** y **{f_hasta_det}**.")
                     if mov_det.empty:
                         st.info("Sin movimientos en esa ventana.")
                     else:
@@ -354,14 +415,14 @@ def render(proyecto):
                         disp_mov.columns = ["Fecha", "Tipo mov.", "Tipo", "Nro. comprobante",
                                             "Sucursal", "Diferencia", "Ingreso", "Egreso", "Usuario"]
                         st.dataframe(disp_mov, width="stretch", hide_index=True, height=280)
-                        botones_descarga(mov_det, f"movimientos_{sku_det}", "det_mov")
+                        botones_descarga(mov_det, f"movimientos_{sku_det}", k("det_mov"))
 
     # ======================================================================
     # Comparativa por sucursal
     # ======================================================================
     df_suc = None
     with tab_suc:
-        suc_merma_calc = st.session_state.get("suc_merma", [])
+        suc_merma_calc = st.session_state.get(k("suc_merma"), [])
         if len(suc_merma_calc) == 1:
             st.info("Para comparar entre sucursales, elegí **más de una** "
                     "(o dejá vacío para todas) arriba y volvé a calcular.")
@@ -387,7 +448,7 @@ def render(proyecto):
             if sin_log and "es_logistica" in df_suc.columns:
                 df_suc = df_suc[~df_suc["es_logistica"].fillna(False)]
             render_comparativa(df_suc, merma_cats, "comp")
-        elif modo_periodo_calc == "fijo" and ctrl_calc:
+        elif modo_periodo_calc in ("fijo", "variable") and ctrl_calc:
             filtrado = len(df) != len(df_full)
             codigos_t = tuple(sorted(df["codigo"])) if filtrado else None
             depo_t = tuple(sorted(suc_merma_calc)) if suc_merma_calc else None
@@ -395,16 +456,16 @@ def render(proyecto):
                 df_suc = comparativa_cacheada(
                     proyecto, ctrl_calc["fecha_desde"], ctrl_calc["fecha_hasta"],
                     ctrl_calc["modo_valorizacion"], ctrl_calc["fecha_valorizacion"],
-                    codigos_t, depo_t)
+                    codigos_t, depo_t, ventanas_tupla(ventanas_calc))
             if filtrado:
                 st.caption("La comparativa respeta los filtros aplicados arriba.")
             sin_log = st.checkbox(
-                "Excluir depósitos logísticos (CD)", value=True, key="comp_sinlog",
+                "Excluir depósitos logísticos (CD)", value=True, key=k("comp_sinlog"),
                 help="Los CD no venden: distorsionan el % de merma. "
                      "Marcalos en Ingesta → Depósitos.")
             if sin_log and "es_logistica" in df_suc.columns:
                 df_suc = df_suc[~df_suc["es_logistica"].fillna(False)]
-            render_comparativa(df_suc, merma_cats, "comp")
+            render_comparativa(df_suc, merma_cats, k("comp"))
 
     # ======================================================================
     # Pareto por rubro
@@ -414,7 +475,7 @@ def render(proyecto):
             "Nivel de agrupación", ["rubro", "super_rubro", "gran_super_rubro"],
             format_func=lambda x: {"rubro": "Rubro", "super_rubro": "Super Rubro",
                                    "gran_super_rubro": "Gran Super Rubro"}[x],
-            key="rubro_nivel")
+            key=k("rubro_nivel"))
         df_rubro = (df.groupby(nivel, dropna=False)
                     .agg(merma_total=("merma_total_valorizada", "sum"),
                          venta_total=("venta_neta", "sum"),
@@ -454,14 +515,11 @@ def render(proyecto):
     st.markdown("---")
     st.markdown("### Reporte imprimible")
     filtros_txt = []
-    if st.session_state.get("analisis_f_gran_super_rubro"):
-        filtros_txt.append("GSR: " + ", ".join(st.session_state["analisis_f_gran_super_rubro"]))
-    if st.session_state.get("analisis_f_rubro"):
-        filtros_txt.append("Rubro: " + ", ".join(st.session_state["analisis_f_rubro"]))
-    if st.session_state.get("analisis_f_marca"):
-        filtros_txt.append("Marca: " + ", ".join(st.session_state["analisis_f_marca"]))
-    if st.session_state.get("analisis_f_txt"):
-        filtros_txt.append(f"Búsqueda: '{st.session_state['analisis_f_txt']}'")
+    for sufijo, etq in (("gran_super_rubro", "GSR"), ("rubro", "Rubro"), ("marca", "Marca")):
+        if st.session_state.get(k(f"analisis_f_{sufijo}")):
+            filtros_txt.append(f"{etq}: " + ", ".join(st.session_state[k(f"analisis_f_{sufijo}")]))
+    if st.session_state.get(k("analisis_f_txt")):
+        filtros_txt.append(f"Búsqueda: '{st.session_state[k('analisis_f_txt')]}'")
     if modo_periodo_calc == "dinamico" and dinamico_meta:
         fecha_desde_meta = (f"Corte dinámico: {dinamico_meta['cantidad']}º "
                             f"comprobante {dinamico_meta['tipo']}")
@@ -479,30 +537,31 @@ def render(proyecto):
         nivel_reporte = st.selectbox(
             "Nivel de agrupación (imprimible)", ["rubro", "super_rubro", "gran_super_rubro"],
             index=["rubro", "super_rubro", "gran_super_rubro"].index(
-                st.session_state.get("rubro_nivel", "rubro")),
+                st.session_state.get(k("rubro_nivel"), "rubro")),
             format_func=lambda x: {"rubro": "Rubro", "super_rubro": "Super Rubro",
                                    "gran_super_rubro": "Gran Super Rubro"}[x],
-            key="reporte_nivel",
+            key=k("reporte_nivel"),
             help="Nivel de la sección 'Merma por X' del imprimible. Por defecto, el "
                  "mismo que la pestaña Pareto por rubro.")
     with rc2:
         vista_reporte = st.radio(
             "Vista (imprimible)", ["Valorizado", "Unidades", "Ambos"],
             index=["Valorizado", "Unidades", "Ambos"].index(
-                st.session_state.get("analisis_vista", "Ambos")),
-            horizontal=True, key="reporte_vista",
+                st.session_state.get(k("analisis_vista"), "Ambos")),
+            horizontal=True, key=k("reporte_vista"),
             help="Qué columnas mostrar en las tablas del imprimible. Por defecto, la "
                  "misma vista que la pestaña Detalle por SKU.")
 
     meta = {
         "proyecto":           proyecto,
-        "sucursal":           st.session_state.get("suc_merma_label", ""),
+        "sucursal":           st.session_state.get(k("suc_merma_label"), ""),
         "fecha_desde":        fecha_desde_meta,
         "fecha_hasta":        fecha_hasta_meta,
         "modo":               modo_meta,
         "fecha_valorizacion": fval or "—",
         "filtros":            " · ".join(filtros_txt),
         "fecha_corte_moda":   fecha_corte_moda,
+        "ventanas":           texto_ventanas(ventanas_calc) if ventanas_calc else None,
     }
     html_reporte = generar_reporte(df, meta, merma_cats, df_sucursales=df_suc,
                                    skus_inv=skus_inv, skus_total=len(df_full),
@@ -511,6 +570,8 @@ def render(proyecto):
     if modo_periodo_calc == "dinamico" and dinamico_meta:
         nombre_reporte = (f"reporte_merma_dinamico_{dinamico_meta['tipo']}x"
                           f"{dinamico_meta['cantidad']}_{dinamico_meta['fecha_hasta']}.html")
+    elif ventanas_calc:
+        nombre_reporte = f"reporte_merma_fechas_variables_{meta['fecha_hasta']}.html"
     else:
         nombre_reporte = f"reporte_merma_{meta['fecha_desde']}_{meta['fecha_hasta']}.html"
-    boton_reporte(html_reporte, nombre_reporte, "dl_reporte")
+    boton_reporte(html_reporte, nombre_reporte, k("dl_reporte"))

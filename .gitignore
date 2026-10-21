@@ -28,3 +28,6 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Salidas de trabajo con documentos de clientes (SOP, anexos) — nunca al repo
+Claude outputs/

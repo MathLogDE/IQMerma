@@ -17,8 +17,8 @@
     <div class="kpi"><div class="etiqueta">Sobrantes</div>
         <div class="valor verde">{{ kpi.sobrante_val | pesos }}</div>
         <div class="detalle">{{ kpi.sobrante_u | unidades }} u. — recibido de más</div></div>
-    <div class="kpi"><div class="etiqueta">Neto (falt. − sobr.)</div>
-        <div class="valor {% if kpi.neto_val > 0 %}rojo{% else %}verde{% endif %}">
+    <div class="kpi"><div class="etiqueta">Neto (sobr. − falt.)</div>
+        <div class="valor {% if kpi.neto_val < 0 %}rojo{% else %}verde{% endif %}">
             {{ kpi.neto_val | pesos }}</div>
         <div class="detalle">{{ kpi.neto_u | unidades }} u.</div></div>
     <div class="kpi"><div class="etiqueta">Remitos con diferencia</div>
@@ -56,7 +56,7 @@
             </td>
             <td class="num">{{ s.sobrante_u | unidades }}</td>
             <td class="num verde">{{ s.sobrante_val | pesos }}</td>
-            <td class="num {% if s.neto_val > 0 %}rojo{% else %}verde{% endif %}">
+            <td class="num {% if s.neto_val < 0 %}rojo{% else %}verde{% endif %}">
                 {{ s.neto_val | pesos }}</td>
             <td class="num">{{ s.remitos | unidades }}</td>
         </tr>
@@ -84,7 +84,7 @@
             <td class="num rojo">{{ m.faltante_val | pesos }}</td>
             <td class="num">{{ m.sobrante_u | unidades }}</td>
             <td class="num verde">{{ m.sobrante_val | pesos }}</td>
-            <td class="num {% if m.neto_val > 0 %}rojo{% else %}verde{% endif %}">
+            <td class="num {% if m.neto_val < 0 %}rojo{% else %}verde{% endif %}">
                 {{ m.neto_val | pesos }}</td>
             <td class="num">{{ m.remitos | unidades }}</td>
         </tr>
@@ -114,7 +114,7 @@
             <td class="num">{{ s.faltante_u | unidades }}</td>
             <td class="num rojo">{{ s.faltante_val | pesos }}</td>
             <td class="num">{{ s.sobrante_u | unidades }}</td>
-            <td class="num {% if s.neto_val > 0 %}rojo{% else %}verde{% endif %}">
+            <td class="num {% if s.neto_val < 0 %}rojo{% else %}verde{% endif %}">
                 {{ s.neto_val | pesos }}</td>
         </tr>
         {% endfor %}

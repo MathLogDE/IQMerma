@@ -119,9 +119,9 @@ def render(proyecto):
     k2.metric("Sobrantes", formatear_pesos(sobr["valorizado"].sum()),
               delta=f"{formatear_unidades(sobr['unidades'].sum())} u",
               delta_color="off")
-    neto = falt["valorizado"].sum() - sobr["valorizado"].sum()
-    k3.metric("Neto (falt. − sobr.)", formatear_pesos(neto),
-              delta="a favor del depósito" if neto > 0 else "a favor de la sucursal",
+    neto = sobr["valorizado"].sum() - falt["valorizado"].sum()
+    k3.metric("Neto (sobr. − falt.)", formatear_pesos(neto),
+              delta="a favor de la sucursal" if neto > 0 else "a favor del depósito",
               delta_color="off")
     k4.metric("Remitos con diferencia", f"{det['numero'].nunique():,}",
               delta=f"{det['codigo'].nunique():,} SKUs", delta_color="off")
@@ -198,9 +198,9 @@ def render(proyecto):
     with e1:
         st.markdown("#### Evolución")
         fig = go.Figure()
-        fig.add_bar(x=ev["periodo"], y=ev[f"faltante_{suf}"], name="Faltante",
+        fig.add_bar(x=ev["periodo"], y=-ev[f"faltante_{suf}"], name="Faltante",
                     marker_color=COLOR_FALT)
-        fig.add_bar(x=ev["periodo"], y=-ev[f"sobrante_{suf}"], name="Sobrante",
+        fig.add_bar(x=ev["periodo"], y=ev[f"sobrante_{suf}"], name="Sobrante",
                     marker_color=COLOR_SOBR)
         fig.add_scatter(x=ev["periodo"], y=ev[f"neto_{suf}"], name="Neto",
                         mode="lines+markers", line=dict(color="#ffd43b", width=2))
@@ -210,7 +210,7 @@ def render(proyecto):
                           yaxis=dict(title=unidad, gridcolor=color_grilla()),
                           **layout_grafico())
         st.plotly_chart(fig, width="stretch")
-        st.caption("Los sobrantes se dibujan hacia abajo para leer el neto de "
+        st.caption("Los faltantes se dibujan hacia abajo para leer el neto de "
                    "un vistazo.")
 
     # --- Ranking -------------------------------------------------------------
@@ -230,9 +230,9 @@ def render(proyecto):
                  else top[col].astype(str).str.slice(0, 45))
 
     fig = go.Figure()
-    fig.add_bar(y=etiquetas, x=top[f"faltante_{suf}"], name="Faltante",
+    fig.add_bar(y=etiquetas, x=-top[f"faltante_{suf}"], name="Faltante",
                 orientation="h", marker_color=COLOR_FALT)
-    fig.add_bar(y=etiquetas, x=-top[f"sobrante_{suf}"], name="Sobrante",
+    fig.add_bar(y=etiquetas, x=top[f"sobrante_{suf}"], name="Sobrante",
                 orientation="h", marker_color=COLOR_SOBR)
     fig.update_layout(height=max(320, 22 * len(top)), barmode="relative",
                       xaxis=dict(title=unidad, gridcolor=color_grilla()),

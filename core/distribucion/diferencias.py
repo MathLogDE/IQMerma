@@ -211,7 +211,8 @@ def resumen_diferencias(det: pd.DataFrame, por: str = "sucursal") -> pd.DataFram
 
     Returns:
         DataFrame por grupo: faltante_u/$, sobrante_u/$, neto_u/$
-        (faltante − sobrante: positivo = falta mercadería), remitos y skus.
+        (sobrante − faltante: el saldo real de la sucursal;
+        negativo = falta mercadería), remitos y skus.
         Ordenado por faltante valorizado.
     """
     base = ["faltante_u", "sobrante_u", "neto_u", "faltante_val",
@@ -238,8 +239,8 @@ def resumen_diferencias(det: pd.DataFrame, por: str = "sucursal") -> pd.DataFram
         "remitos":      g["numero"].nunique(),
         "skus":         g["codigo"].nunique(),
     })
-    res["neto_u"] = res["faltante_u"] - res["sobrante_u"]
-    res["neto_val"] = res["faltante_val"] - res["sobrante_val"]
+    res["neto_u"] = res["sobrante_u"] - res["faltante_u"]
+    res["neto_val"] = res["sobrante_val"] - res["faltante_val"]
 
     res = (res.reset_index()[[por] + base]
            .sort_values("faltante_val", ascending=False)

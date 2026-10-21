@@ -765,8 +765,8 @@ def generar_reporte_diferencias(
         "remitos":      int(det["numero"].nunique()) if not det.empty else 0,
         "skus":         int(det["codigo"].nunique()) if not det.empty else 0,
     }
-    kpi["neto_val"] = kpi["faltante_val"] - kpi["sobrante_val"]
-    kpi["neto_u"] = kpi["faltante_u"] - kpi["sobrante_u"]
+    kpi["neto_val"] = kpi["sobrante_val"] - kpi["faltante_val"]
+    kpi["neto_u"] = kpi["sobrante_u"] - kpi["faltante_u"]
 
     nombres = meta.get("nombres_sucursal", {})
 
