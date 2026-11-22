@@ -255,6 +255,21 @@ def listar_fechas_valorizacion(proyecto: str) -> list[str]:
     return [str(r[0]) for r in rows]
 
 
+def snapshots_parciales(proyecto: str) -> set[str]:
+    """Fechas de snapshot de stock marcadas como parciales (tomadas a mitad del día)."""
+    conn = conectar(proyecto)
+    try:
+        rows = conn.execute("""
+            SELECT periodo FROM periodos_ingesta
+            WHERE tabla = 'stock_sucursal' AND estado = 'ok' AND parcial
+        """).fetchall()
+    except duckdb.BinderException:  # DB sin la columna: nunca se cargó un parcial
+        return set()
+    finally:
+        conn.close()
+    return {str(r[0]) for r in rows}
+
+
 # ---------------------------------------------------------------------------
 # Movimientos crudos (comprobantes)
 # ---------------------------------------------------------------------------

@@ -105,18 +105,18 @@ def render(proyecto):
     )
     cols = ["codigo", "descripcion", "rubro", "marca", "ean", "uxb", "costo",
             "lista_1", "ventas_promedio_ajustado", "dias_con_stock",
-            "dias_quiebre", "stock_sucursal", "stock_cd_001",
+            "dias_quiebre", "stock_sucursal", "stock_cd_001", "stock_cd_002",
             "fecha_ultimo_remito", "fecha_ultima_venta", "pedido_recomendado"]
     tabla = disp[cols].copy()
     for c in ["uxb", "ventas_promedio_ajustado", "dias_con_stock", "dias_quiebre",
-              "stock_sucursal", "stock_cd_001", "pedido_recomendado"]:
+              "stock_sucursal", "stock_cd_001", "stock_cd_002", "pedido_recomendado"]:
         tabla[c] = tabla[c].apply(formatear_unidades)
     for c in ["costo", "lista_1"]:
         tabla[c] = tabla[c].apply(formatear_pesos)
     tabla.columns = ["Código", "Descripción", "Rubro", "Marca", "EAN", "UxB",
                      "Costo", "Lista 1", "Venta prom. ajustada",
                      "Días con stock", "Días de quiebre", "Stock sucursal",
-                     "Stock CD 001", "Últ. remito", "Últ. venta",
+                     "Stock CD 001", "Stock CD 002", "Últ. remito", "Últ. venta",
                      f"Pedido ({dias_cobertura} d)"]
     st.dataframe(tabla.head(1000), width="stretch", hide_index=True)
     if len(disp) > 1000:

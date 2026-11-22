@@ -232,12 +232,15 @@ def _registrar_ingesta(
     fecha_snapshot: str,
     archivo_origen: str,
     registros: int,
+    parcial: bool = False,
 ) -> None:
+    # DBs creadas antes de la columna `parcial` (idempotente)
+    conn.execute("ALTER TABLE periodos_ingesta ADD COLUMN IF NOT EXISTS parcial BOOLEAN DEFAULT FALSE")
     conn.execute("""
         INSERT INTO periodos_ingesta
-            (tabla, periodo, archivo_origen, fecha_ingesta, estado, registros_cargados)
-        VALUES ('stock_sucursal', ?, ?, ?, 'ok', ?)
-    """, [fecha_snapshot, archivo_origen, datetime.now(timezone.utc), registros])
+            (tabla, periodo, archivo_origen, fecha_ingesta, estado, registros_cargados, parcial)
+        VALUES ('stock_sucursal', ?, ?, ?, 'ok', ?, ?)
+    """, [fecha_snapshot, archivo_origen, datetime.now(timezone.utc), registros, parcial])
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +252,7 @@ def ingestar_stock(
     proyecto: str,
     fecha_snapshot: str,
     forzar: bool = False,
+    parcial: bool = False,
 ) -> dict:
     """
     Carga una planilla de stock por sucursal en DuckDB.
@@ -262,6 +266,8 @@ def ingestar_stock(
         proyecto:       Nombre del proyecto (carpeta bajo projects/)
         fecha_snapshot: Fecha del stock en formato "YYYY-MM-DD"
         forzar:         Si True, reemplaza el snapshot aunque ya exista
+        parcial:        Si True, el snapshot se tomó a mitad del día (p. ej. tras
+                        bajar stock para un pedido): los informes avisan al anclarse
 
     Returns:
         dict con keys:
@@ -369,7 +375,7 @@ def ingestar_stock(
     print(f"  ✓ {registros:,} registros insertados")
 
     # 7. Registrar ingesta
-    _registrar_ingesta(conn, fecha_snapshot, archivo_origen, registros)
+    _registrar_ingesta(conn, fecha_snapshot, archivo_origen, registros, parcial)
     conn.close()
 
     print(f"\n  Ingesta completada: {registros:,} registros, {len(sucursales_cargadas)} sucursales")

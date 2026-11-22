@@ -46,10 +46,10 @@ def _marcas(fig, serie, codigos, tipos, mostrar_nombre=True,
             text=texto, textposition="top center",
             textfont=dict(size=9, color=cfg["color"]),
             cliponaxis=False,
-            customdata=m[["codigo", "delta"]],
+            customdata=m[["codigo", "delta", "quien"]],
             hovertemplate=(cfg["etiqueta"] + " %{customdata[0]}<br>%{x|%d/%m/%Y}"
                            "<br>%{customdata[1]:+,.0f} u → stock %{y:,.0f}"
-                           "<extra></extra>"),
+                           "<br>%{customdata[2]}<extra></extra>"),
         )
 
 
@@ -87,6 +87,7 @@ def render(proyecto):
     with c4:
         f_snap = st.selectbox(
             "Anclar al stock del", snapshots, key="ser_snap",
+            format_func=etiqueta_stock(proyecto),
             help="Snapshot desde el que se camina hacia atrás/adelante.")
 
     if st.button("Reconstruir serie"):

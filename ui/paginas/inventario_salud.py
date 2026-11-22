@@ -37,7 +37,8 @@ def render(proyecto):
                 key="salud_suc",
             )
         with c1:
-            fecha_stock = st.selectbox("Stock al", snapshots, key="salud_fs")
+            fecha_stock = st.selectbox("Stock al", snapshots, key="salud_fs",
+                                       format_func=etiqueta_stock(proyecto))
         with c2:
             dias_ventana = st.selectbox(
                 "Ventana de demanda", [30, 60, 90, 180], index=2,

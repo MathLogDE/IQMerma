@@ -81,7 +81,9 @@ def serie_stock(
         inventario/ajuste/transformación en neto no distingue "no hubo
         movimiento" de "hubo uno que no varió el stock" — p. ej. un
         inventario físico contado sin faltantes: se sigue marcando el día
-        aunque delta_inv sea 0), stock
+        aunque delta_inv sea 0), quien_rem / quien_md / quien_inv / quien_cs /
+        quien_tr (texto para el hover: en REM "a/de <depósito o proveedor>",
+        en MD y ajustes el usuario que lo cargó), stock
         (nivel resultante), vigencia_dias (cuántos días se mantiene ese nivel
         hasta el próximo movimiento o el fin del rango).
         attrs: fecha_stock, desde, hasta, sucursales.
@@ -150,7 +152,17 @@ def serie_stock(
                        COUNT(*) FILTER (WHERE m.tipo = 'MD')::INTEGER AS movs_md,
                        COUNT(*) FILTER (WHERE m.tipo = 'INV')::INTEGER AS movs_inv,
                        COUNT(*) FILTER (WHERE m.tipo = 'CS')::INTEGER AS movs_cs,
-                       COUNT(*) FILTER (WHERE m.tipo = 'TR')::INTEGER AS movs_tr
+                       COUNT(*) FILTER (WHERE m.tipo = 'TR')::INTEGER AS movs_tr,
+                       -- Para el hover de las marcas: en REM la contraparte
+                       -- (`nombre`: depósito o proveedor), en MD/AJU quién lo hizo.
+                       string_agg(DISTINCT CASE WHEN m.diferencia < 0 THEN 'a ' ELSE 'de ' END
+                                  || m.nombre, ', ')
+                           FILTER (WHERE m.tipomov = 'REM' AND m.tipo IS DISTINCT FROM 'MD')
+                           AS quien_rem,
+                       string_agg(DISTINCT COALESCE(NULLIF(m.usuario, ''), m.nombre), ', ') FILTER (WHERE m.tipo = 'MD') AS quien_md,
+                       string_agg(DISTINCT COALESCE(NULLIF(m.usuario, ''), m.nombre), ', ') FILTER (WHERE m.tipo = 'INV') AS quien_inv,
+                       string_agg(DISTINCT COALESCE(NULLIF(m.usuario, ''), m.nombre), ', ') FILTER (WHERE m.tipo = 'CS') AS quien_cs,
+                       string_agg(DISTINCT COALESCE(NULLIF(m.usuario, ''), m.nombre), ', ') FILTER (WHERE m.tipo = 'TR') AS quien_tr
                 FROM movimientos m
                 WHERE m.codigodepo IN (SELECT unnest($depos))
                   AND m.fecha >  LEAST($desde::DATE, $fs::DATE)
@@ -183,6 +195,7 @@ def serie_stock(
                 SELECT codigodepo, codigo, fecha, delta, delta_rem, delta_aju,
                        delta_md, delta_inv, delta_cs, delta_tr,
                        movs_rem, movs_md, movs_inv, movs_cs, movs_tr,
+                       quien_rem, quien_md, quien_inv, quien_cs, quien_tr,
                        SUM(delta) OVER (PARTITION BY codigodepo, codigo ORDER BY fecha
                                         ROWS UNBOUNDED PRECEDING) AS acumulado
                 FROM mov
@@ -209,6 +222,7 @@ def serie_stock(
                 SELECT a.codigodepo, a.codigo, a.fecha, a.delta, a.delta_rem, a.delta_aju,
                        a.delta_md, a.delta_inv, a.delta_cs, a.delta_tr,
                        a.movs_rem, a.movs_md, a.movs_inv, a.movs_cs, a.movs_tr,
+                       a.quien_rem, a.quien_md, a.quien_inv, a.quien_cs, a.quien_tr,
                        COALESCE(s.stock_snap, 0) + a.acumulado - n.acum_fs AS stock
                 FROM acum a
                 JOIN niveles n ON a.codigodepo = n.codigodepo AND a.codigo = n.codigo
@@ -224,6 +238,9 @@ def serie_stock(
                        0.0 AS delta, 0.0 AS delta_rem, 0.0 AS delta_aju,
                        0.0 AS delta_md, 0.0 AS delta_inv, 0.0 AS delta_cs, 0.0 AS delta_tr,
                        0 AS movs_rem, 0 AS movs_md, 0 AS movs_inv, 0 AS movs_cs, 0 AS movs_tr,
+                       NULL::VARCHAR AS quien_rem, NULL::VARCHAR AS quien_md,
+                       NULL::VARCHAR AS quien_inv, NULL::VARCHAR AS quien_cs,
+                       NULL::VARCHAR AS quien_tr,
                        COALESCE(s.stock_snap, 0) + n.acum_desde_prev - n.acum_fs AS stock
                 FROM universo u
                 JOIN niveles n ON u.codigodepo = n.codigodepo AND u.codigo = n.codigo
@@ -254,7 +271,8 @@ def serie_stock(
                                       "delta_rem", "delta_aju", "delta_md",
                                       "delta_inv", "delta_cs", "delta_tr",
                                       "movs_rem", "movs_md", "movs_inv",
-                                      "movs_cs", "movs_tr", "stock"])
+                                      "movs_cs", "movs_tr", "quien_rem", "quien_md",
+                                      "quien_inv", "quien_cs", "quien_tr", "stock"])
         vacio.attrs.update(attrs)
         return vacio
 
@@ -272,7 +290,8 @@ def serie_stock(
     cols = ["codigodepo", "codigo", "descripcion", "rubro", "marca",
             "gran_super_rubro", "fecha", "delta", "delta_rem", "delta_aju",
             "delta_md", "delta_inv", "delta_cs", "delta_tr", "movs_rem",
-            "movs_md", "movs_inv", "movs_cs", "movs_tr", "stock", "vigencia_dias"]
+            "movs_md", "movs_inv", "movs_cs", "movs_tr", "quien_rem", "quien_md",
+            "quien_inv", "quien_cs", "quien_tr", "stock", "vigencia_dias"]
     df = (df[cols].sort_values(["codigodepo", "codigo", "fecha"])
           .reset_index(drop=True))
     df.attrs.update(attrs)
@@ -507,9 +526,10 @@ def marcadores_movimiento(serie: pd.DataFrame,
     Returns:
         DataFrame largo: codigo, fecha, tipomov, delta (movimiento neto de ese
         tipo ese día — puede ser 0), stock (nivel al cierre del día, donde va
-        la marca).
+        la marca), quien (contraparte del remito o usuario del MD/ajuste;
+        "" si la serie no lo trae).
     """
-    vacio = pd.DataFrame(columns=["codigo", "fecha", "tipomov", "delta", "stock"])
+    vacio = pd.DataFrame(columns=["codigo", "fecha", "tipomov", "delta", "stock", "quien"])
     if serie.empty or "movs_rem" not in serie.columns:
         return vacio
 
@@ -542,6 +562,8 @@ def marcadores_movimiento(serie: pd.DataFrame,
             "tipomov": tipo,
             "delta": d[col].values,
             "stock": d["stock"].values,
+            "quien": (d[f"quien_{tipo.lower()}"].fillna("").values
+                      if f"quien_{tipo.lower()}" in d else ""),
         }))
     if not partes:
         return vacio

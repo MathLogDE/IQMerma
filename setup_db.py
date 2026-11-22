@@ -222,7 +222,8 @@ CREATE TABLE IF NOT EXISTS periodos_ingesta (
     archivo_origen     VARCHAR     NOT NULL,
     fecha_ingesta      TIMESTAMP   NOT NULL DEFAULT current_timestamp,
     estado             VARCHAR     NOT NULL DEFAULT 'ok',  -- 'ok', 'reemplazado'
-    registros_cargados INTEGER
+    registros_cargados INTEGER,
+    parcial            BOOLEAN     DEFAULT FALSE  -- stock: snapshot tomado a mitad del día
 );
 
 

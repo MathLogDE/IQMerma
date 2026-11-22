@@ -48,6 +48,7 @@ def render(proyecto):
     with c3:
         f_snap = st.selectbox(
             "Anclar al stock del", snapshots, key="crz_snap",
+            format_func=etiqueta_stock(proyecto),
             help="Snapshot desde el que se camina hacia atrás/adelante.")
 
     todas = sucursales["codigodepo"].tolist()

@@ -50,6 +50,11 @@ def render(proyecto):
 
         if tipo_archivo == "stock":
             fecha_snapshot = st.date_input("Fecha del snapshot de stock")
+            stock_parcial = st.checkbox(
+                "Stock parcial (tomado a mitad del día)", value=False,
+                help="Marcalo si bajaste el stock antes del cierre (p. ej. para un pedido). "
+                     "En los informes, esta fecha aparece como (Parcial) al elegir el stock.",
+            )
 
         multi_hoja = False
         hoja_sel = 0
@@ -107,7 +112,8 @@ def render(proyecto):
                         r = ingestar_stock(
                             tmp_path, proyecto,
                             fecha_snapshot=str(fecha_snapshot),
-                            forzar=forzar
+                            forzar=forzar,
+                            parcial=stock_parcial,
                         )
                         st.success(
                             f"✓ {r['registros']:,} registros cargados — "

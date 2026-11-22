@@ -21,7 +21,8 @@ def render(proyecto):
     else:
         c1, c2, c3 = st.columns(3)
         with c1:
-            fecha_stock = st.selectbox("Stock al", snapshots, key="tr_fs")
+            fecha_stock = st.selectbox("Stock al", snapshots, key="tr_fs",
+                                       format_func=etiqueta_stock(proyecto))
         with c2:
             dias_demanda = st.selectbox(
                 "Ventana de demanda", [56, 90, 180], index=1,

@@ -1,0 +1,692 @@
+{
+  ".claude/launch.json": {
+    "mtime": 1794775579.5617204,
+    "seen": 1795009065.461449,
+    "ast_hash": "f5e069706cf07a00d59e4414aa3b2a49",
+    "semantic_hash": ""
+  },
+  ".claude/settings.json": {
+    "mtime": 1792160381.5216975,
+    "seen": 1792613396.1067257,
+    "ast_hash": "eab3ca9db1f3821bc25549f8c293ef63",
+    "semantic_hash": ""
+  },
+  "core/auth.py": {
+    "mtime": 1791840092.0960963,
+    "seen": 1792613396.1067257,
+    "ast_hash": "ee380813f307dd95a50813a40232e85e",
+    "semantic_hash": ""
+  },
+  "core/calidad_datos.py": {
+    "mtime": 1789419399.2339504,
+    "seen": 1792613396.1067257,
+    "ast_hash": "dc2fdcaf37ac4cd466d5a2ed0e4bfdb7",
+    "semantic_hash": ""
+  },
+  "core/comercial/__init__.py": {
+    "mtime": 1784139263.970702,
+    "seen": 1792613396.1067257,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": ""
+  },
+  "core/comercial/comprobantes.py": {
+    "mtime": 1787249894.9187539,
+    "seen": 1792613396.1067257,
+    "ast_hash": "089f2c08d13d24190181b00145df7630",
+    "semantic_hash": ""
+  },
+  "core/comercial/margenes.py": {
+    "mtime": 1785164836.7106814,
+    "seen": 1792613396.1067257,
+    "ast_hash": "dd487c1c2be7008b7357342b093a2e48",
+    "semantic_hash": ""
+  },
+  "core/comun.py": {
+    "mtime": 1795008970.76816,
+    "seen": 1795009065.461449,
+    "ast_hash": "609f719f7c5304bdd40cec47cbaa266b",
+    "semantic_hash": ""
+  },
+  "core/distribucion/__init__.py": {
+    "mtime": 1784139263.9382007,
+    "seen": 1792613396.1067257,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": ""
+  },
+  "core/distribucion/diferencias.py": {
+    "mtime": 1791839277.1786747,
+    "seen": 1792613396.1067257,
+    "ast_hash": "add5259776577ae3011a5916dcd762fc",
+    "semantic_hash": ""
+  },
+  "core/distribucion/transferencias.py": {
+    "mtime": 1784140450.7113109,
+    "seen": 1792613396.1067257,
+    "ast_hash": "0033b39cc24f2363fe9c6710290a1273",
+    "semantic_hash": ""
+  },
+  "core/forecasting/__init__.py": {
+    "mtime": 1784139264.0028381,
+    "seen": 1792613396.1067257,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": ""
+  },
+  "core/forecasting/demanda.py": {
+    "mtime": 1789315692.6594164,
+    "seen": 1792613396.1067257,
+    "ast_hash": "98a2ba6ec6072ce890ea17cc9a0ded50",
+    "semantic_hash": ""
+  },
+  "core/forecasting/evaluacion.py": {
+    "mtime": 1789316156.450218,
+    "seen": 1792613396.1067257,
+    "ast_hash": "f47044eb49fef0064cd13e4486326d27",
+    "semantic_hash": ""
+  },
+  "core/forecasting/intermitente.py": {
+    "mtime": 1789313409.7835999,
+    "seen": 1792613396.1067257,
+    "ast_hash": "f77fc9b863ea4d3983aa3de437c61874",
+    "semantic_hash": ""
+  },
+  "core/forecasting/pooled.py": {
+    "mtime": 1789316065.7476535,
+    "seen": 1792613396.1067257,
+    "ast_hash": "7b2299349e64c46aecb18a4c5c98fabb",
+    "semantic_hash": ""
+  },
+  "core/forecasting/segmentacion.py": {
+    "mtime": 1789308349.466663,
+    "seen": 1792613396.1067257,
+    "ast_hash": "58fb82617c7f0ff05b21fb2bbf493bb2",
+    "semantic_hash": ""
+  },
+  "core/forecasting/semanal.py": {
+    "mtime": 1789312801.9185212,
+    "seen": 1792613396.1067257,
+    "ast_hash": "94fc6383896f5d7864508c494e1efaec",
+    "semantic_hash": ""
+  },
+  "core/forecasting/semanal_sku.py": {
+    "mtime": 1790099742.3610957,
+    "seen": 1792613396.1067257,
+    "ast_hash": "54b8cbd515df114107a244bc2356c97a",
+    "semantic_hash": ""
+  },
+  "core/graficos.py": {
+    "mtime": 1791136554.3218367,
+    "seen": 1792613396.1067257,
+    "ast_hash": "e106c335594885f74db131abb7c0a613",
+    "semantic_hash": ""
+  },
+  "core/inventario/__init__.py": {
+    "mtime": 1784139263.9127278,
+    "seen": 1792613396.1067257,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": ""
+  },
+  "core/inventario/interanual.py": {
+    "mtime": 1787177554.9952314,
+    "seen": 1792613396.1067257,
+    "ast_hash": "1177b897bb2682cd9ab769cc3404942e",
+    "semantic_hash": ""
+  },
+  "core/inventario/pedido_general.py": {
+    "mtime": 1787767036.1036885,
+    "seen": 1792613396.1067257,
+    "ast_hash": "ea8e53310d6872c5ce2e78cdcef49e01",
+    "semantic_hash": ""
+  },
+  "core/inventario/politicas.py": {
+    "mtime": 1785176075.6500006,
+    "seen": 1792613396.1067257,
+    "ast_hash": "97eeefc9e7d960311667574997edadd5",
+    "semantic_hash": ""
+  },
+  "core/inventario/reposicion.py": {
+    "mtime": 1787570635.434085,
+    "seen": 1792613396.1067257,
+    "ast_hash": "a0b341385519c768de22fab26afd522f",
+    "semantic_hash": ""
+  },
+  "core/inventario/salud.py": {
+    "mtime": 1785165093.6074574,
+    "seen": 1792613396.1067257,
+    "ast_hash": "2e448d573e284d2ec0c81317c068a32c",
+    "semantic_hash": ""
+  },
+  "core/inventario/series.py": {
+    "mtime": 1795389922.946831,
+    "seen": 1795389934.4315088,
+    "ast_hash": "f7f75b0694ef96792bbbf1ea9677109a",
+    "semantic_hash": ""
+  },
+  "core/merma/__init__.py": {
+    "mtime": 1784139263.8827386,
+    "seen": 1792613396.1067257,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": ""
+  },
+  "core/merma/analisis.py": {
+    "mtime": 1791842568.7553837,
+    "seen": 1792613396.1067257,
+    "ast_hash": "d0dc7b2c78568ea88105b6d52519c220",
+    "semantic_hash": ""
+  },
+  "core/merma/avance.py": {
+    "mtime": 1786560994.5466142,
+    "seen": 1792613396.1067257,
+    "ast_hash": "42570bf26fdd6457e2f50c031a9e86a6",
+    "semantic_hash": ""
+  },
+  "core/merma/control.py": {
+    "mtime": 1786455866.3050816,
+    "seen": 1792613396.1067257,
+    "ast_hash": "8afd5f73e6bda4868c99f232e9fc14c6",
+    "semantic_hash": ""
+  },
+  "core/merma/transformaciones.py": {
+    "mtime": 1787424466.9643905,
+    "seen": 1792613396.1067257,
+    "ast_hash": "6a323b82a6ad0e1a5bbaf7731e519e67",
+    "semantic_hash": ""
+  },
+  "core/merma/ultimos_movimientos.py": {
+    "mtime": 1786992801.554371,
+    "seen": 1792613396.1067257,
+    "ast_hash": "ea735d6cbc4d06c3c062b06a4cb39e98",
+    "semantic_hash": ""
+  },
+  "core/nc_anexos.py": {
+    "mtime": 1791136868.8157566,
+    "seen": 1792613396.1067257,
+    "ast_hash": "9f09900e74d54d8c311fa5f33b4476c1",
+    "semantic_hash": ""
+  },
+  "core/nc_contactos.py": {
+    "mtime": 1791138830.7234576,
+    "seen": 1792613396.1067257,
+    "ast_hash": "58872ce8893b2277efb50e23090ec3d6",
+    "semantic_hash": ""
+  },
+  "core/nc_mail.py": {
+    "mtime": 1791247371.6375272,
+    "seen": 1792613396.1067257,
+    "ast_hash": "80385552980a26a9d6de6a9ec810bca8",
+    "semantic_hash": ""
+  },
+  "core/no_conformidades.py": {
+    "mtime": 1791247383.696296,
+    "seen": 1792613396.1067257,
+    "ast_hash": "4a5130142f80542ef42329f80a29e189",
+    "semantic_hash": ""
+  },
+  "core/pdf.py": {
+    "mtime": 1791136655.6769812,
+    "seen": 1792613396.1067257,
+    "ast_hash": "c47821b47654f51ad4549d964f5b5fb6",
+    "semantic_hash": ""
+  },
+  "core/reporte.py": {
+    "mtime": 1791839277.1805007,
+    "seen": 1792613396.1067257,
+    "ast_hash": "9d8ea98661e6cd17e6de3b7fd945742a",
+    "semantic_hash": ""
+  },
+  "core/sop.py": {
+    "mtime": 1791130783.8022778,
+    "seen": 1792613396.1067257,
+    "ast_hash": "2abb1102f1b7ddc89752870598f615a7",
+    "semantic_hash": ""
+  },
+  "ingesta/movimientos.py": {
+    "mtime": 1785258868.3744547,
+    "seen": 1792613396.1067257,
+    "ast_hash": "3e17758d3056049b2e51e461e4548663",
+    "semantic_hash": ""
+  },
+  "ingesta/referencias.py": {
+    "mtime": 1783868931.197301,
+    "seen": 1792613396.1067257,
+    "ast_hash": "3e102636d4d5064de7b17cca3979db61",
+    "semantic_hash": ""
+  },
+  "ingesta/stock.py": {
+    "mtime": 1795008970.7666519,
+    "seen": 1795009065.461449,
+    "ast_hash": "e8ff656b79f0a24bc7c410395699a2c6",
+    "semantic_hash": ""
+  },
+  "setup_db.py": {
+    "mtime": 1795008970.7609253,
+    "seen": 1795009065.461449,
+    "ast_hash": "62fd1bf104439cdbf36b5027e392c518",
+    "semantic_hash": ""
+  },
+  "tests/test_no_conformidades.py": {
+    "mtime": 1791247504.0414627,
+    "seen": 1792613396.1067257,
+    "ast_hash": "642486ac33e9d83cdb4068d943ba4b9f",
+    "semantic_hash": ""
+  },
+  "ui/app.py": {
+    "mtime": 1793888008.6599429,
+    "seen": 1793888105.285073,
+    "ast_hash": "06a5d3207af9cbf7f497e7e2796ff155",
+    "semantic_hash": ""
+  },
+  "ui/app_cliente.py": {
+    "mtime": 1791840092.5776482,
+    "seen": 1792613396.1067257,
+    "ast_hash": "85313d6161c3e455be28e98b101e8758",
+    "semantic_hash": ""
+  },
+  "ui/comun.py": {
+    "mtime": 1795009290.8690548,
+    "seen": 1795009297.9953518,
+    "ast_hash": "25f4e0b72f90df18f75400a4a1338c3a",
+    "semantic_hash": ""
+  },
+  "ui/paginas/__init__.py": {
+    "mtime": 1784144495.6966126,
+    "seen": 1792613396.1067257,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": ""
+  },
+  "ui/paginas/calidad_datos.py": {
+    "mtime": 1789419432.4062538,
+    "seen": 1792613396.1067257,
+    "ast_hash": "1fed5473840c1355dcb6cc5edb03d9bb",
+    "semantic_hash": ""
+  },
+  "ui/paginas/comercial_comprobantes.py": {
+    "mtime": 1787249945.3659153,
+    "seen": 1792613396.1067257,
+    "ast_hash": "31d4f60041c41e5e3e8853da02f37e43",
+    "semantic_hash": ""
+  },
+  "ui/paginas/comercial_margenes.py": {
+    "mtime": 1785596922.2140238,
+    "seen": 1792613396.1067257,
+    "ast_hash": "a2577bd89b8b934e8c0954c156b472c7",
+    "semantic_hash": ""
+  },
+  "ui/paginas/distribucion_diferencias.py": {
+    "mtime": 1791839277.1805007,
+    "seen": 1792613396.1067257,
+    "ast_hash": "dc84855062c0c2c77c7023600a53fd7e",
+    "semantic_hash": ""
+  },
+  "ui/paginas/distribucion_transferencias.py": {
+    "mtime": 1795009290.8730772,
+    "seen": 1795009297.9953518,
+    "ast_hash": "c56c217960e51471ace4175f6018a52b",
+    "semantic_hash": ""
+  },
+  "ui/paginas/forecasting.py": {
+    "mtime": 1790099769.874257,
+    "seen": 1792613396.1067257,
+    "ast_hash": "b050591e202801505491afe50efe9a6c",
+    "semantic_hash": ""
+  },
+  "ui/paginas/ingesta.py": {
+    "mtime": 1795009290.8745904,
+    "seen": 1795009297.9953518,
+    "ast_hash": "a72ead977fcab6fe7d2d89604078f4b2",
+    "semantic_hash": ""
+  },
+  "ui/paginas/inicio.py": {
+    "mtime": 1784144495.6975825,
+    "seen": 1792613396.1067257,
+    "ast_hash": "90d23c04de3bf24f41bcbe7182b3c7b5",
+    "semantic_hash": ""
+  },
+  "ui/paginas/inventario_cruce.py": {
+    "mtime": 1795009290.8710659,
+    "seen": 1795009297.9953518,
+    "ast_hash": "2d0f6ee8d7e7bd3faa59655ba5bf28fc",
+    "semantic_hash": ""
+  },
+  "ui/paginas/inventario_interanual.py": {
+    "mtime": 1787177548.0735776,
+    "seen": 1792613396.1067257,
+    "ast_hash": "b9091de6760242c1fb3809bc463c9e3b",
+    "semantic_hash": ""
+  },
+  "ui/paginas/inventario_pedido_general.py": {
+    "mtime": 1787767055.697112,
+    "seen": 1792613396.1067257,
+    "ast_hash": "2f91dc2b2bcfd900db6faeba0dce3322",
+    "semantic_hash": ""
+  },
+  "ui/paginas/inventario_pedido_general2.py": {
+    "mtime": 1788182458.0200083,
+    "seen": 1792613396.1067257,
+    "ast_hash": "364674de6e22acef7c8a630887d45804",
+    "semantic_hash": ""
+  },
+  "ui/paginas/inventario_pedido_sucursal.py": {
+    "mtime": 1795018347.1457171,
+    "seen": 1795018351.4542375,
+    "ast_hash": "5c375b0bf2dacf3a946e164f1a6ef4eb",
+    "semantic_hash": ""
+  },
+  "ui/paginas/inventario_politicas.py": {
+    "mtime": 1795009290.8730772,
+    "seen": 1795009297.9953518,
+    "ast_hash": "24957c848b7ac475ea9063c350c82cd1",
+    "semantic_hash": ""
+  },
+  "ui/paginas/inventario_reposicion.py": {
+    "mtime": 1786996578.246613,
+    "seen": 1792613396.1067257,
+    "ast_hash": "e2402ac908b8a529844e7e332f01dc33",
+    "semantic_hash": ""
+  },
+  "ui/paginas/inventario_salud.py": {
+    "mtime": 1795009290.8710659,
+    "seen": 1795009297.9953518,
+    "ast_hash": "a982a48b8e95d1e95b5d5f387320bb4e",
+    "semantic_hash": ""
+  },
+  "ui/paginas/inventario_series.py": {
+    "mtime": 1795389905.5372343,
+    "seen": 1795389934.4315088,
+    "ast_hash": "1d72e2835bae32b029cb58a5950919aa",
+    "semantic_hash": ""
+  },
+  "ui/paginas/merma_analisis.py": {
+    "mtime": 1791840053.6606247,
+    "seen": 1792613396.1067257,
+    "ast_hash": "d012749f4ee40d808b1eb1975f53fc0e",
+    "semantic_hash": ""
+  },
+  "ui/paginas/merma_avance.py": {
+    "mtime": 1786560675.0120428,
+    "seen": 1792613396.1067257,
+    "ast_hash": "f1c692d37181c6f9e03701ce95228c6f",
+    "semantic_hash": ""
+  },
+  "ui/paginas/merma_control.py": {
+    "mtime": 1786455899.5388925,
+    "seen": 1792613396.1067257,
+    "ast_hash": "c1749467c8530b1bdf29f37f3b70235d",
+    "semantic_hash": ""
+  },
+  "ui/paginas/merma_matriz.py": {
+    "mtime": 1791842596.6510518,
+    "seen": 1792613396.1067257,
+    "ast_hash": "1bc26cee380ed7e910223df5eed8f20d",
+    "semantic_hash": ""
+  },
+  "ui/paginas/merma_transformaciones.py": {
+    "mtime": 1787424834.3020782,
+    "seen": 1792613396.1067257,
+    "ast_hash": "06cc5d2282f77812a53b4d99a0cf5e50",
+    "semantic_hash": ""
+  },
+  "ui/paginas/merma_ultimos_movimientos.py": {
+    "mtime": 1787422490.7480226,
+    "seen": 1792613396.1067257,
+    "ast_hash": "4b9efddd9b6c4f899ca80eed129ed521",
+    "semantic_hash": ""
+  },
+  "ui/paginas/no_conformidades.py": {
+    "mtime": 1791247649.797348,
+    "seen": 1792613396.1067257,
+    "ast_hash": "dc54b0af7d0f0b9643587528e59033a7",
+    "semantic_hash": ""
+  },
+  "CLAUDE.md": {
+    "mtime": 1792160381.5216975,
+    "seen": 1792613396.1067257,
+    "ast_hash": "67d88e9d0760c3ba54c75dfd9551c1c5",
+    "semantic_hash": ""
+  },
+  "ESTRATEGIA_COMPLIANCE.md": {
+    "mtime": 1791247768.1344256,
+    "seen": 1792613396.1067257,
+    "ast_hash": "1666be7e8e2287336e9be12c87c10664",
+    "semantic_hash": ""
+  },
+  "GUIA_USO.md": {
+    "mtime": 1791842612.7461908,
+    "seen": 1792613396.1067257,
+    "ast_hash": "f26b9c5d42a652738c9da6b8454833ec",
+    "semantic_hash": ""
+  },
+  "IQMERMA.md": {
+    "mtime": 1794775580.156975,
+    "seen": 1795009065.461449,
+    "ast_hash": "f25f65d916ba6a86f1df9e7f61b0bdeb",
+    "semantic_hash": ""
+  },
+  "MIGRACION_V2.md": {
+    "mtime": 1784123604.7492886,
+    "seen": 1792613396.1067257,
+    "ast_hash": "01abddf0844f3ed79ea3b785bc22cc69",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1791235353.5514405,
+    "seen": 1792613396.1067257,
+    "ast_hash": "21602f1f296c7c7173f51aa2cf5466bc",
+    "semantic_hash": ""
+  },
+  "auth/usuarios.ejemplo.yaml": {
+    "mtime": 1786833142.4525692,
+    "seen": 1792613396.1067257,
+    "ast_hash": "9804840a5740660b9b2af2da55de5ef7",
+    "semantic_hash": ""
+  },
+  "mv ver.txt": {
+    "mtime": 1785240699.852482,
+    "seen": 1792613396.1067257,
+    "ast_hash": "7fc6ddc262a958da3c67662f1fd56270",
+    "semantic_hash": ""
+  },
+  "requirements.txt": {
+    "mtime": 1789312987.1130917,
+    "seen": 1792613396.1067257,
+    "ast_hash": "09c440f99b65edabb0befce8612f61f3",
+    "semantic_hash": ""
+  },
+  "templates/acta_cierre_nc.html": {
+    "mtime": 1791247722.8620708,
+    "seen": 1792613396.1067257,
+    "ast_hash": "cfa64324d76451aef40f5e6f57d0e0b4",
+    "semantic_hash": ""
+  },
+  "templates/base.html": {
+    "mtime": 1790262545.3825426,
+    "seen": 1792613396.1067257,
+    "ast_hash": "6c3b97820ee993428c68d8fdb979136d",
+    "semantic_hash": ""
+  },
+  "templates/nc_anexo_merma.html": {
+    "mtime": 1791136868.818803,
+    "seen": 1792613396.1067257,
+    "ast_hash": "719707b14b5c736360ad86a92d55d99e",
+    "semantic_hash": ""
+  },
+  "templates/nc_anexo_serie.html": {
+    "mtime": 1791136477.9541426,
+    "seen": 1792613396.1067257,
+    "ast_hash": "cc261f620e5dc24d373f9e60928a269c",
+    "semantic_hash": ""
+  },
+  "templates/nc_anexo_vista.html": {
+    "mtime": 1791136677.2758675,
+    "seen": 1792613396.1067257,
+    "ast_hash": "1d72ceb599bf21c31eee809822891d61",
+    "semantic_hash": ""
+  },
+  "templates/reporte_avance_conteo.html": {
+    "mtime": 1786560521.3818367,
+    "seen": 1792613396.1067257,
+    "ast_hash": "6a6fb76dcb02a72d65f00e004fabd3dd",
+    "semantic_hash": ""
+  },
+  "templates/reporte_avance_general.html": {
+    "mtime": 1786560515.0390317,
+    "seen": 1792613396.1067257,
+    "ast_hash": "e87b3fa43b6110a016b2dc933d63e4bf",
+    "semantic_hash": ""
+  },
+  "templates/reporte_comprobantes.html": {
+    "mtime": 1787250471.983171,
+    "seen": 1792613396.1067257,
+    "ast_hash": "8668a2314ebcf34ab82769ff265908c5",
+    "semantic_hash": ""
+  },
+  "templates/reporte_control.html": {
+    "mtime": 1784644441.678897,
+    "seen": 1792613396.1067257,
+    "ast_hash": "cdfb6c7756668fdcea56cfb62a63bb1e",
+    "semantic_hash": ""
+  },
+  "templates/reporte_cruce.html": {
+    "mtime": 1785166000.7031727,
+    "seen": 1792613396.1067257,
+    "ast_hash": "afb7ac1bc1d56f841a301f4428d074bc",
+    "semantic_hash": ""
+  },
+  "templates/reporte_diferencias.html": {
+    "mtime": 1791839277.1805007,
+    "seen": 1792613396.1067257,
+    "ast_hash": "79ae43e29631f35b258c5b7f039cd489",
+    "semantic_hash": ""
+  },
+  "templates/reporte_forecast.html": {
+    "mtime": 1784038482.2621512,
+    "seen": 1792613396.1067257,
+    "ast_hash": "31b8239005ae27fb6f821f0f4f9e160e",
+    "semantic_hash": ""
+  },
+  "templates/reporte_interanual.html": {
+    "mtime": 1787177584.5915487,
+    "seen": 1792613396.1067257,
+    "ast_hash": "b9c188722a7cb1186780426a5a38510c",
+    "semantic_hash": ""
+  },
+  "templates/reporte_merma.html": {
+    "mtime": 1791840074.1209702,
+    "seen": 1792613396.1067257,
+    "ast_hash": "3ab48877660d27515397617a85bc9b93",
+    "semantic_hash": ""
+  },
+  "templates/reporte_no_conformidad.html": {
+    "mtime": 1791136642.6471238,
+    "seen": 1792613396.1067257,
+    "ast_hash": "6d75f8f99c9525cc6e703a82ee3e7729",
+    "semantic_hash": ""
+  },
+  "templates/reporte_pedido_sucursal.html": {
+    "mtime": 1786830971.2559536,
+    "seen": 1792613396.1067257,
+    "ast_hash": "a28808d9ec8096f09153fe1567137bb5",
+    "semantic_hash": ""
+  },
+  "templates/reporte_politicas.html": {
+    "mtime": 1784038465.3808064,
+    "seen": 1792613396.1067257,
+    "ast_hash": "6cae5e32b0500f8d1f1900894565bebb",
+    "semantic_hash": ""
+  },
+  "templates/reporte_reposicion.html": {
+    "mtime": 1785601050.8778532,
+    "seen": 1792613396.1067257,
+    "ast_hash": "c8cd7271d6e1e807f51683ff5748b667",
+    "semantic_hash": ""
+  },
+  "templates/reporte_salud.html": {
+    "mtime": 1784038443.593868,
+    "seen": 1792613396.1067257,
+    "ast_hash": "02fe16f54d016980f53a346192412032",
+    "semantic_hash": ""
+  },
+  "templates/reporte_series.html": {
+    "mtime": 1785166012.3037174,
+    "seen": 1792613396.1067257,
+    "ast_hash": "78c866b74e7184e4323550a21d3ae6bb",
+    "semantic_hash": ""
+  },
+  "templates/reporte_transferencias.html": {
+    "mtime": 1784052320.534163,
+    "seen": 1792613396.1067257,
+    "ast_hash": "94ab29e082a8bd9221edbbbf9fdebc31",
+    "semantic_hash": ""
+  },
+  "templates/reporte_transformaciones.html": {
+    "mtime": 1787424526.3806684,
+    "seen": 1792613396.1067257,
+    "ast_hash": "65593636e2e65e17d7f5febafade0608",
+    "semantic_hash": ""
+  },
+  "ui/IQMerma_c_fondo.jpeg": {
+    "mtime": 1786206857.4216192,
+    "seen": 1792613396.1067257,
+    "ast_hash": "08d34db81bf4afac55a83552f6574c25",
+    "semantic_hash": ""
+  },
+  "ui/IQMerma_s_fondo.jpeg": {
+    "mtime": 1786206830.7079878,
+    "seen": 1792613396.1067257,
+    "ast_hash": "034149b0df986a818871c128151169c4",
+    "semantic_hash": ""
+  },
+  "ui/IQMerma_s_fondo_solo_logo.jpeg": {
+    "mtime": 1786206875.6512558,
+    "seen": 1792613396.1067257,
+    "ast_hash": "728d78415b619b8f0276a30cc39bd1f8",
+    "semantic_hash": ""
+  },
+  "ui/iqmerma_logo.png": {
+    "mtime": 1786213811.3835409,
+    "seen": 1792613396.1067257,
+    "ast_hash": "6be35d0582582bf3922e5a67c96d3826",
+    "semantic_hash": ""
+  },
+  "ui/iqmerma_logo_dark.png": {
+    "mtime": 1786216670.8595166,
+    "seen": 1792613396.1067257,
+    "ast_hash": "0a05bf9d9c4e601d73960b6575bac45e",
+    "semantic_hash": ""
+  },
+  "ui/solo_logo_s_fondo.png": {
+    "mtime": 1786213757.6555214,
+    "seen": 1792613396.1067257,
+    "ast_hash": "823ca68d66b46e42a593749fa131b08f",
+    "semantic_hash": ""
+  },
+  "ui/solo_logo_s_fondo_modo_oscuro.png": {
+    "mtime": 1786216609.5224206,
+    "seen": 1792613396.1067257,
+    "ast_hash": "0cf3aba487ff64a082215997bd7c9e35",
+    "semantic_hash": ""
+  },
+  "core/merma/conciliacion.py": {
+    "mtime": 1793888081.8417695,
+    "seen": 1793888105.285073,
+    "ast_hash": "a23e7a60c17bb8f697103b4dd09e9a59",
+    "semantic_hash": ""
+  },
+  "tests/test_conciliacion.py": {
+    "mtime": 1793887999.3205242,
+    "seen": 1793888105.285073,
+    "ast_hash": "5121468bb60bd5e1e61673aa4ede7f79",
+    "semantic_hash": ""
+  },
+  "ui/paginas/merma_conciliacion.py": {
+    "mtime": 1793888030.5380883,
+    "seen": 1793888105.285073,
+    "ast_hash": "8ec5131ad61befedd19abc49dc7e7063",
+    "semantic_hash": ""
+  },
+  "tests/test_stock_parcial.py": {
+    "mtime": 1795008994.7370453,
+    "seen": 1795009065.461449,
+    "ast_hash": "b8c8ab3734ca8dc7308957ce633b55e7",
+    "semantic_hash": ""
+  }
+}

@@ -23,7 +23,7 @@ from core.calidad_datos import (
     detectar_dias_anomalos, resumen_dias_anomalos, MAX_SUCURSALES_AISLADO,
 )
 from core.comun import (
-    listar_categorias, listar_fechas_valorizacion,
+    listar_categorias, listar_fechas_valorizacion, snapshots_parciales,
     catalogo_articulos, filtrar_catalogo,
     tipos_movimiento, movimientos_detalle,
     MODOS_VALORIZACION, MODOS_VALORIZACION_MERMA,
@@ -40,6 +40,9 @@ from core.merma.avance import (
 from core.merma.control import evolucion_mensual, movimientos_outliers, ajustes_por
 from core.merma.ultimos_movimientos import ultimo_movimiento_por_tipo
 from core.merma.transformaciones import detalle_transformaciones, pares_transformacion
+from core.merma.conciliacion import (
+    movimientos_codigos, eventos as eventos_conciliacion, combinaciones, stock_por_deposito,
+)
 from core.inventario.salud import analizar_stock, resumen_salud, ESTADOS
 from core.inventario.series import (
     serie_stock, resumen_quiebres, serie_diaria, series_diarias,
@@ -213,6 +216,12 @@ def listar_proyectos() -> list[str]:
         p.name for p in projects_dir.iterdir()
         if p.is_dir() and (p / "data.duckdb").exists()
     ])
+
+
+def etiqueta_stock(proyecto: str):
+    """format_func para selectores de snapshot: marca los cargados como parciales."""
+    parciales = snapshots_parciales(proyecto)
+    return lambda f: f"{f} (Parcial)" if f in parciales else f
 
 
 def listar_sucursales(proyecto: str) -> pd.DataFrame:

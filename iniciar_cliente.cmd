@@ -7,10 +7,10 @@ rem https://elastic-obedient-trodden.ngrok-free.dev/iqmerma/ via Caddy.
 rem Corre en su propia ventana (cmd /k) para poder ver los logs.
 rem Usa "python -m streamlit" (no streamlit.exe, que Device Guard bloquea
 rem por ser un ejecutable sin firma en AppData).
-rem Se ejecuta automaticamente al iniciar sesion de Windows via acceso
-rem directo en shell:startup (Task Scheduler esta bloqueado por politica
-rem corporativa). Para desactivar el arranque automatico, borrar
-rem "IQMerma - Iniciar Cliente.lnk" de esa carpeta.
+rem Lo llama C:\ArqNexo\portal\iniciar_portal.cmd (el que arranca todo al
+rem iniciar sesion y con el acceso directo "Iniciar servidores" del escritorio);
+rem tambien se puede correr solo. Task Scheduler esta bloqueado por politica
+rem corporativa, por eso el arranque va por shell:startup.
 cd /d "%~dp0"
 set PYTHONIOENCODING=utf-8
 

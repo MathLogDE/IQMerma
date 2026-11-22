@@ -1,6 +1,6 @@
 # IQMerma — Documento de referencia
 
-> **Versión del documento:** 1.4 · **Fecha:** 2026-10-12 · **Base:** branch `desarrollo-compliance`
+> **Versión del documento:** 1.5 · **Fecha:** 2026-11-05 · **Base:** branch `desarrollo-compliance`
 > (sale de `visualizaciones` @ `bbaf0f9`). La estrategia hacia ISO 9001 / Lean Six Sigma está en
 > [ESTRATEGIA_COMPLIANCE.md](ESTRATEGIA_COMPLIANCE.md).
 >
@@ -106,9 +106,9 @@ que se detectan en las sucursales.
 | | `ui/app.py` (**admin**) | `ui/app_cliente.py` (**cliente**) |
 |---|---|---|
 | Acceso | Local, sin login | Web con login, expuesta por túnel ngrok (`iniciar_cliente.cmd`) |
-| Puerto | 8501 | 8502 |
+| Puerto | 8505 | 8502 |
 | DuckDB | Lectura y escritura (ingesta) | `setup_db.activar_modo_solo_lectura()` → `read_only=True` |
-| Páginas | Todas, más Ingesta, Calidad de datos, Últimos movimientos y Pedido general (v1) | Las de `core/auth.PAGINAS_DISPONIBLES`, filtradas por el `paginas:` de cada usuario |
+| Páginas | Todas, más Ingesta, Calidad de datos, Últimos movimientos, Conciliación y Pedido general (v1) | Las de `core/auth.PAGINAS_DISPONIBLES`, filtradas por el `paginas:` de cada usuario |
 | Proyectos | Selector abierto | Solo los del `proyectos:` del usuario |
 | NC | Actor con todos los roles | Actor con los `roles_nc` del usuario |
 
@@ -171,6 +171,7 @@ Estado: ✅ en uso · 🧪 en prueba · 🔒 solo admin.
 | Análisis / Matriz por sucursal (fechas variables) | Lo mismo que Análisis y Matriz, pero con un período propio por familia de comprobante (AJU, VTA, REM). Ver §5.1 | `core/merma/analisis.py` (`ventanas=`) | ✅ |
 | Transformaciones | Detalle línea a línea de las TR: baja del SKU original y alta del SKU de liquidación | `core/merma/transformaciones.py` | ✅ |
 | Últimos movimientos | Fecha del último movimiento de cada tipo de comprobante, por SKU, en una sucursal | `core/merma/ultimos_movimientos.py` | ✅ 🔒 |
+| Conciliación | ¿A dónde fueron unas unidades? Para uno o varios códigos (transversal): remitos que no cerraron entre depósitos (sin destino / sin origen / en tránsito / anulado) y ajustes de toda la red, con una columna por código; combinaciones de hasta 3 eventos que suman una cantidad. Ver §5.4 | `core/merma/conciliacion.py` | ✅ 🔒 |
 
 ### Inventario
 | Página | Qué responde | Motor | Estado |
@@ -333,6 +334,12 @@ El mapeo se hace **por `tipo`**. `tipomov` es informativo.
 - **En MD, `diferencia` no sirve.** El ERP exporta el egreso negativo solo en ese tipo. El
   sentido se reconstruye desde `ingreso`/`egreso` (`core/distribucion/diferencias.py`).
 - **Comprobante = (numero, codigodepo, tipo).** La numeración se repite entre tipos.
+- **Remitos entre depósitos (RI, MD) se emparejan por (numero, tipo):** cada punta está en
+  un depósito y suman cero si cerró. En RI, `usuario` es la **contraparte** (destino en la
+  salida, origen en la entrada), no una persona. RE y RDC tienen una sola punta por
+  naturaleza (proveedor). Un remito anulado aparece como RI de una punta + un CS
+  (a veces `tipo_aj='ANULACION'`, a veces vacío) con las cantidades opuestas en el mismo
+  depósito (`core/merma/conciliacion.py`).
 
 ### 5.5 Reconstrucción de stock diaria
 `stock(d) = stock(D) + acum(d) − acum(D)`, donde D es la fecha del snapshot y `acum` es la
@@ -616,8 +623,9 @@ EMITIDA / ENVIADA / RESPONDIDA / ACEPTADA → ANULADA      (CERRADA_SUCURSAL ya 
   ("Conflicting lock is held").
 - **Consola cp1252:** los scripts que imprimen ✓ o emoji necesitan
   `PYTHONIOENCODING=utf-8`.
-- **Puertos:** 8501 admin, 8502 cliente. Las pruebas de UI van en 8503 o el que esté libre.
-  No hay que matar un 8501 que ya esté corriendo sin preguntar.
+- **Puertos:** 8505 admin, 8502 cliente; 8501 es de la app argy del portal (no usarlo:
+  `localhost:8501` cae en argy aunque IQMerma también escuche ahí); 8503 lo usa
+  `web.servidor` y 8504 el programa workflow. Las pruebas de UI van en 8505 o el que esté libre. No hay que matar una instancia que ya esté corriendo sin preguntar.
 - **`pandas==3.0.3` está fijado.** Antes de instalar un paquete se corre
   `pip install --dry-run`. `statsforecast`, `mlforecast`, `fugue` y `utilsforecast` lo
   bajan a 2.x; ya pasó y hubo que revertirlo. Con miles de series se prefiere un hand-roll
@@ -680,6 +688,10 @@ EMITIDA / ENVIADA / RESPONDIDA / ACEPTADA → ANULADA      (CERRADA_SUCURSAL ya 
       continuo/errático/lumpy? El dato de la Fase 5 ya está.
 - [ ] ¿Promover "Pedido general de distribución 2" y retirar la v1?
 
+**Conciliación (v1):**
+- [ ] Emparejar anulaciones que cubren varios remitos juntos (hoy solo 1 CS ↔ 1 remito).
+- [ ] ¿Sumarla al acceso cliente (`core/auth.PAGINAS_DISPONIBLES`)?
+
 **Menores:** el warning de Streamlit "Could not serialize pd.DataFrame.attrs" en la
 evaluación es cosmético.
 
@@ -738,3 +750,4 @@ evaluación es cosmético.
 | 2026-10-05 | 1.2 | NC: cierre con la sucursal antes de verificar (ACEPTADA → CERRADA_SUCURSAL), implementación de acciones, acta de cierre exportable y enviable, migración de esquema versionada |
 | 2026-10-12 | 1.3 | Páginas "Análisis (fechas variables)" y "Matriz por sucursal (fechas variables)": un período por AJU / VTA / REM (§3, §5.1). Diferencias de camión: neto = sobrante − faltante |
 | 2026-10-12 | 1.4 | Matriz con fechas variables: métrica "Stock inicial" u/$ (stock del sistema antes de cada INV de la ventana AJU, §5.1) |
+| 2026-11-05 | 1.5 | Página "Conciliación" (solo admin): remitos descalzados y ajustes de la red para uno o varios códigos (§3); emparejamiento de remitos y anulaciones (§5.4) |
