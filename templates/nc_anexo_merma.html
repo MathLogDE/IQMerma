@@ -1,0 +1,49 @@
+<p class="anexo-meta">Sucursal {{ p.sucursal_nombre or p.codigodepo }} · período {{ desde }} – {{ hasta }}
+    · valorización {{ modo }}{% if fecha_valorizacion %} (snapshot {{ fecha_valorizacion }}){% endif %}
+    {% if rubros %} · rubros: {{ rubros | join(', ') }}{% endif %}{% if corte %} · movimientos hasta el {{ corte }}{% endif %}.</p>
+
+<div class="kpis">
+    <div class="kpi alerta"><div class="etiqueta">Merma total</div><div class="valor">{{ merma | pesos }}</div>
+        <div class="detalle">{{ merma_u | unidades }} unidades</div></div>
+    <div class="kpi"><div class="etiqueta">Venta del período</div><div class="valor">{{ venta | pesos }}</div></div>
+    <div class="kpi"><div class="etiqueta">% merma sobre venta</div><div class="valor">{{ pct | pct }}</div></div>
+    <div class="kpi"><div class="etiqueta">SKU con merma</div><div class="valor">{{ skus }}</div></div>
+</div>
+
+{% if por_cat %}
+<table style="margin-bottom:12px">
+    <thead><tr><th>Categoría</th><th class="num">Aporte</th></tr></thead>
+    <tbody>
+    {% for c in por_cat %}<tr><td>{{ c.categoria }}</td><td class="num">{{ c.valor | pesos }}</td></tr>{% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<h3>{% if top | length < top_n %}SKU con merma ({{ top | length }}){% else %}Los {{ top_n }} SKU con mayor merma{% endif %}</h3>
+<table>
+    <thead><tr><th>Código</th><th>Descripción</th><th>Rubro</th><th class="num">Unidades</th><th class="num">Merma $</th><th class="num">% s/venta</th></tr></thead>
+    <tbody>
+    {% for r in top %}
+    <tr{% if r.destacado %} class="destacado"{% endif %}><td>{{ r.codigo }}</td><td>{{ r.descripcion }}</td><td>{{ r.rubro }}</td>
+        <td class="num">{{ r.unidades | unidades }}</td><td class="num">{{ r.valor | pesos }}</td><td class="num">{{ r.pct | pct }}</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+{% if extra %}
+<h3 style="margin-top:12px">Códigos de la no conformidad</h3>
+<table>
+    <thead><tr><th>Código</th><th>Descripción</th><th>Rubro</th><th class="num">Unidades</th><th class="num">Merma $</th><th class="num">% s/venta</th></tr></thead>
+    <tbody>
+    {% for r in extra %}
+    <tr class="destacado"><td>{{ r.codigo }}</td><td>{{ r.descripcion }}</td><td>{{ r.rubro }}</td>
+        <td class="num">{{ r.unidades | unidades }}</td><td class="num">{{ r.valor | pesos }}</td><td class="num">{{ r.pct | pct }}</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% if no_encontrados %}
+<p class="anexo-meta">Sin movimientos en el período: {{ no_encontrados | join(', ') }}.</p>
+{% endif %}
+<p class="anexo-meta">Merma = faltante neto de las categorías que suman a merma (inventario, ajustes, diferencias, etc.); un valor negativo es sobrante.
+    Los códigos de la no conformidad aparecen resaltados.</p>

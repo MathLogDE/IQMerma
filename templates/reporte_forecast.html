@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Métrica: <b>{{ meta.metrica }}</b></span>
+    <span>Nivel: <b>{{ meta.nivel }}</b></span>
+    <span>Alcance: <b>{{ meta.sucursal }}</b></span>
+    <span>Horizonte: <b>{{ meta.horizonte }} meses</b></span>
+{% endblock %}
+
+{% block cuerpo %}
+<div class="seccion">
+    <h2>Proyección por grupo (unidades / mes)</h2>
+    <table>
+        <thead><tr><th>Grupo</th>
+            {% for m in meses %}<th class="num">{{ m }}</th>{% endfor %}
+            <th class="num">Total</th><th class="num">Total $</th><th class="num">MAPE</th></tr></thead>
+        <tbody>
+        {% for g in grupos %}
+        <tr>
+            <td>{{ g.nombre }}</td>
+            {% for v in g.valores %}<td class="num">{{ v | unidades }}</td>{% endfor %}
+            <td class="num"><b>{{ g.total | unidades }}</b></td>
+            <td class="num">{{ g.total_valor | pesos }}</td>
+            <td class="num">{{ g.mape }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+        {% if total_fila %}
+        <tfoot><tr><td>Total</td>
+            {% for v in total_fila.valores %}<td class="num">{{ v | unidades }}</td>{% endfor %}
+            <td class="num">{{ total_fila.total | unidades }}</td>
+            <td class="num">{{ total_fila.total_valor | pesos }}</td><td></td></tr></tfoot>
+        {% endif %}
+    </table>
+    <p style="font-size:8pt;color:var(--gris);margin-top:6px">
+        Modelo: estacionalidad + tendencia robusta amortiguada. MAPE = error
+        porcentual promedio re-prediciendo los últimos 3 meses reales.
+        {% if atipicos %}Meses atípicos detectados (excluidos del ajuste): {{ atipicos }}.{% endif %}
+    </p>
+</div>
+
+{% if historia %}
+<div class="seccion">
+    <h2>Historia reciente vs proyección — {{ historia.grupo }}</h2>
+    <table>
+        <thead><tr><th>Mes</th><th class="num">Unidades</th><th></th><th class="barra-celda"></th></tr></thead>
+        <tbody>
+        {% for h in historia.filas %}
+        <tr>
+            <td>{{ h.mes }}</td>
+            <td class="num {{ 'rojo' if h.tipo == 'forecast' }}">{{ h.unidades | unidades }}</td>
+            <td style="font-size:7.5pt;color:var(--gris)">{{ "proyección" if h.tipo == "forecast" else ("atípico" if h.atipico else "") }}</td>
+            <td class="barra-celda"><div class="barra {{ 'venta' if h.tipo != 'forecast' }}" style="width: {{ h.w }}%"></div></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

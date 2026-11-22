@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Período: <b>{{ meta.desde }} → {{ meta.hasta }}</b></span>
+    <span>Anclado al stock del: <b>{{ meta.fecha_stock }}</b></span>
+    <span>Recorte: <b>{{ meta.recorte }}</b></span>
+    {% if meta.sucursales %}<span>Sucursales: <b>{{ meta.sucursales }}</b></span>{% endif %}
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    <div class="kpi"><div class="etiqueta">Sucursales</div>
+        <div class="valor">{{ kpi.sucursales | unidades }}</div></div>
+    <div class="kpi"><div class="etiqueta">SKUs con movimiento</div>
+        <div class="valor">{{ kpi.skus | unidades }}</div></div>
+    <div class="kpi"><div class="etiqueta">Stock inicial</div>
+        <div class="valor">{{ kpi.stock_inicial | unidades }} u.</div></div>
+    <div class="kpi{% if kpi.variacion_pct is not none and kpi.variacion_pct < 0 %} alerta{% endif %}">
+        <div class="etiqueta">Stock final</div>
+        <div class="valor">{{ kpi.stock_final | unidades }} u.</div>
+        <div class="detalle">
+            {% if kpi.variacion_pct is not none %}{{ kpi.variacion_pct | pct }} vs. inicial{% endif %}
+        </div>
+    </div>
+</div>
+
+{% if not sucursales %}
+<div class="seccion"><p style="color:var(--gris)">
+    Sin movimientos en el período para ese recorte.</p></div>
+{% endif %}
+
+{% if sucursales %}
+<div class="seccion">
+    <h2>Por sucursal
+        <span style="font-weight:400;color:var(--gris);font-size:9pt">
+            (las {{ sucursales | length }} de mayor stock final)</span></h2>
+    <table>
+        <thead><tr>
+            <th>Sucursal</th><th class="num">SKUs</th>
+            <th class="num">Stock inicial</th><th class="num">Stock final</th>
+            <th class="barra-celda"></th>
+            <th class="num">Variación</th><th class="num">Quiebre prom.</th>
+        </tr></thead>
+        <tbody>
+        {% for s in sucursales %}
+        <tr>
+            <td>{{ s.sucursal }}</td>
+            <td class="num">{{ s.skus | unidades }}</td>
+            <td class="num">{{ s.stock_inicial | unidades }}</td>
+            <td class="num">{{ s.stock_final | unidades }}</td>
+            <td class="barra-celda"><div class="barra" style="width:{{ s.stock_w }}%"></div></td>
+            <td class="num {% if s.variacion_pct is not none and s.variacion_pct < 0 %}rojo{% elif s.variacion_pct is not none %}verde{% endif %}">
+                {{ s.variacion_pct | pct }}
+            </td>
+            <td class="num">{{ s.quiebre_prom | unidades }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

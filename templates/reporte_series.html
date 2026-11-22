@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Sucursal: <b>{{ meta.sucursal }}</b></span>
+    <span>Período: <b>{{ meta.desde }} → {{ meta.hasta }}</b></span>
+    <span>Anclado al stock del: <b>{{ meta.fecha_stock }}</b></span>
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    <div class="kpi"><div class="etiqueta">SKUs analizados</div>
+        <div class="valor">{{ kpi.skus | unidades }}</div></div>
+    <div class="kpi alerta"><div class="etiqueta">Con quiebre</div>
+        <div class="valor">{{ kpi.con_quiebre | unidades }}</div></div>
+    <div class="kpi"><div class="etiqueta">Días en quiebre (prom.)</div>
+        <div class="valor">{{ kpi.dias_quiebre_prom | unidades }}</div></div>
+    <div class="kpi"><div class="etiqueta">Racha más larga</div>
+        <div class="valor">{{ kpi.racha_max | unidades }} d</div></div>
+</div>
+
+{% if kpi.negativos %}
+<div class="seccion"><p style="color:var(--acento)">
+    ⚠️ {{ kpi.negativos | unidades }} SKUs reconstruyen con stock negativo en
+    algún momento (movimientos y snapshot no reconcilian del todo; tomar esos
+    con pinzas).</p></div>
+{% endif %}
+
+{% if not quiebres %}
+<div class="seccion"><p style="color:var(--gris)">
+    Sin quiebres en el período con estos filtros.</p></div>
+{% endif %}
+
+{% if quiebres %}
+<div class="seccion">
+    <h2>Top {{ quiebres | length }} SKUs por días en quiebre</h2>
+    <table>
+        <thead><tr>
+            <th>Código</th><th>Descripción</th><th>Rubro</th>
+            <th class="num">Días quiebre</th><th class="barra-celda">% período</th>
+            <th class="num">Racha máx</th><th class="num">Stock final</th>
+            <th class="num">Movs</th>
+        </tr></thead>
+        <tbody>
+        {% for q in quiebres %}
+        <tr>
+            <td>{{ q.codigo }}</td>
+            <td>{{ q.descripcion }}</td>
+            <td>{{ q.rubro }}</td>
+            <td class="num rojo">{{ q.dias_quiebre | unidades }}</td>
+            <td class="barra-celda">
+                <div class="barra" style="width:{{ q.pct_w }}%"></div>
+                <span style="font-size:8pt;color:var(--gris)">{{ q.pct_quiebre | pct }}</span>
+            </td>
+            <td class="num">{{ q.racha | unidades }}</td>
+            <td class="num">{{ q.stock_final | unidades }}</td>
+            <td class="num">{{ q.movimientos | unidades }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

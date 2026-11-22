@@ -1,0 +1,34 @@
+# auth/usuarios.ejemplo.yaml — plantilla para auth/usuarios.yaml
+#
+# auth/usuarios.yaml (sin ".ejemplo") es el archivo real que lee
+# ui/app_cliente.py — no se versiona (ver .gitignore), vive solo en esta PC.
+# Para crear el primero: copiá este archivo a auth/usuarios.yaml y reemplazá
+# el usuario de ejemplo por los reales.
+#
+# Cómo dar de alta un usuario:
+#   1. Elegí un "username" (minúsculas, sin espacios) y una contraseña.
+#   2. Escribí la contraseña EN TEXTO PLANO en `password` — streamlit-
+#      authenticator la hashea sola (bcrypt) la primera vez que alguien
+#      entra, y reescribe este archivo con el hash. No hace falta hashearla
+#      a mano.
+#   3. `proyectos` es la lista de nombres de carpeta bajo projects/ que ese
+#      usuario puede ver (tiene que matchear exacto, ej. "Yuriti_S.A"). Un
+#      usuario sin proyectos asignados entra pero no ve ningún dato.
+#   4. Para borrar un usuario, borrá su bloque entero de acá.
+#
+# El bloque `cookie` es propio de esta instalación — no lo copies de otro
+# lado. `key` ya viene generado al azar en auth/usuarios.yaml; si lo cambiás,
+# todas las sesiones activas se desloguean.
+
+credentials:
+  usernames:
+    ejemplo_gerente:
+      name: Nombre Apellido
+      email: gerente@yuriti.com.ar
+      password: cambiar-esta-contrasena
+      proyectos: [Yuriti_S.A]
+
+cookie:
+  name: mermaiq_cliente
+  key: CAMBIAR_POR_UNA_CLAVE_ALEATORIA_PROPIA
+  expiry_days: 30

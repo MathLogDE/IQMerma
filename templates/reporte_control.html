@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Alcance: <b>{{ meta.sucursal }}</b></span>
+    <span>Período: <b>{{ meta.fecha_desde }} → {{ meta.fecha_hasta }}</b></span>
+    <span>Valorización: <b>{{ meta.modo }}</b> (stock del <b>{{ meta.fecha_valorizacion }}</b>)</span>
+{% endblock %}
+
+{% block cuerpo %}
+{% if kpi %}
+<div class="kpis">
+    <div class="kpi alerta"><div class="etiqueta">Merma {{ kpi.mes }}</div>
+        <div class="valor">{{ kpi.merma | pesos }}</div>
+        <div class="detalle">{{ kpi.delta_merma }} vs mes anterior</div></div>
+    <div class="kpi"><div class="etiqueta">Venta {{ kpi.mes }}</div>
+        <div class="valor">{{ kpi.venta | pesos }}</div></div>
+    <div class="kpi alerta"><div class="etiqueta">% Merma {{ kpi.mes }}</div>
+        <div class="valor">{{ kpi.pct | pct }}</div></div>
+</div>
+{% endif %}
+
+{% if evolucion %}
+<div class="seccion">
+    <h2>Evolución mensual</h2>
+    <table>
+        <thead><tr><th>Mes</th><th class="num">Merma $</th><th class="num">Merma u.</th>
+            <th class="num">Venta $</th><th class="num">% Merma</th><th class="barra-celda"></th></tr></thead>
+        <tbody>
+        {% for e in evolucion %}
+        <tr>
+            <td>{{ e.mes }}</td>
+            <td class="num {{ 'verde' if e.neg else 'rojo' }}">{{ e.merma | pesos }}</td>
+            <td class="num">{{ e.merma_u | unidades }}</td>
+            <td class="num">{{ e.venta | pesos }}</td>
+            <td class="num">{{ e.pct | pct }}</td>
+            <td class="barra-celda"><div class="barra {{ 'verde' if e.neg else '' }}" style="width: {{ e.merma_w }}%"></div></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if outliers %}
+<div class="seccion">
+    <h2>Movimientos de mayor impacto (top {{ outliers | length }})</h2>
+    <table>
+        <thead><tr><th>Fecha</th><th>Suc.</th><th>Tipo</th><th>N°</th><th>Usuario</th>
+            <th>SKU</th><th>Descripción</th><th class="num">Unid.</th>
+            <th class="num">Valor $</th><th class="num">% merma per.</th></tr></thead>
+        <tbody>
+        {% for o in outliers %}
+        <tr>
+            <td>{{ o.fecha }}</td><td>{{ o.sucursal }}</td><td>{{ o.tipo }}</td>
+            <td>{{ o.numero }}</td><td>{{ o.usuario }}</td><td>{{ o.codigo }}</td>
+            <td>{{ o.descripcion }}</td>
+            <td class="num">{{ o.unidades | unidades }}</td>
+            <td class="num {{ 'rojo' if o.valor < 0 }}">{{ o.valor | pesos }}</td>
+            <td class="num">{{ o.pct | pct }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <p style="font-size:8pt;color:var(--gris);margin-top:4px">
+        Pares de igual magnitud y signo opuesto suelen ser anulaciones/correcciones.
+    </p>
+</div>
+{% endif %}
+
+{% if usuarios %}
+<div class="seccion">
+    <h2>Merma por usuario</h2>
+    <table>
+        <thead><tr><th>Usuario</th><th>Suc.</th><th class="num">Movs</th><th class="num">SKUs</th>
+            <th class="num">Faltante $</th><th class="num">Sobrante $</th><th class="num">Neto $</th>
+            <th class="num">% falt.</th><th class="barra-celda"></th></tr></thead>
+        <tbody>
+        {% for u in usuarios %}
+        <tr>
+            <td>{{ u.usuario }}</td><td>{{ u.suc }}</td>
+            <td class="num">{{ u.movs | unidades }}</td>
+            <td class="num">{{ u.skus | unidades }}</td>
+            <td class="num rojo">{{ u.faltante | pesos }}</td>
+            <td class="num">{{ u.sobrante | pesos }}</td>
+            <td class="num">{{ u.neto | pesos }}</td>
+            <td class="num">{{ u.pct | pct }}</td>
+            <td class="barra-celda"><div class="barra" style="width: {{ u.faltante_w }}%"></div></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

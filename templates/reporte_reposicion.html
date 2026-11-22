@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Sucursal: <b>{{ meta.sucursal }}</b></span>
+    <span>Período: <b>{{ meta.desde }} → {{ meta.hasta }}</b></span>
+    <span>Barrera: <b>{{ meta.barrera | unidades }} u.</b></span>
+    <span>Anclado al stock del: <b>{{ meta.fecha_stock }}</b></span>
+    {% if meta.recorte %}<span>Recorte: <b>{{ meta.recorte }}</b></span>{% endif %}
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    <div class="kpi"><div class="etiqueta">SKUs analizados</div>
+        <div class="valor">{{ kpi.skus | unidades }}</div></div>
+    <div class="kpi"><div class="etiqueta">Con remitos en el período</div>
+        <div class="valor">{{ kpi.con_remitos | unidades }}</div></div>
+    <div class="kpi"><div class="etiqueta">Cadencia promedio</div>
+        <div class="valor">{{ kpi.cadencia_prom | unidades }} d</div></div>
+    <div class="kpi"><div class="etiqueta">Días en quiebre (prom.)</div>
+        <div class="valor">{{ kpi.dias_quiebre_prom | unidades }}</div></div>
+    <div class="kpi alerta"><div class="etiqueta">Cruzaron la barrera</div>
+        <div class="valor">{{ kpi.quebraron_barrera | unidades }}</div></div>
+    <div class="kpi"><div class="etiqueta">Censurados (sin cruzar)</div>
+        <div class="valor">{{ kpi.censurados_barrera | unidades }}</div></div>
+    <div class="kpi"><div class="etiqueta">Mediana días hasta cruzar</div>
+        <div class="valor">{{ kpi.dias_hasta_quiebre_mediana | unidades }}</div></div>
+</div>
+
+<div class="seccion"><p style="color:var(--gris)">
+    "Censurado" = tuvo remito en el período pero no llegó a cruzar la barrera
+    en la ventana observada desde ese remito hasta el fin del período — no es
+    lo mismo que "cero días", es que todavía no se sabe.</p></div>
+
+{% if not ranking %}
+<div class="seccion"><p style="color:var(--gris)">
+    Ningún SKU cruzó la barrera dentro del período con estos filtros.</p></div>
+{% endif %}
+
+{% if ranking %}
+<div class="seccion">
+    <h2>Ranking de urgencia — top {{ ranking | length }} por días hasta cruzar la barrera</h2>
+    <div class="grafico">
+        <div class="pie-grafico">Días transcurridos entre el último remito de
+            cada SKU y el momento en que su stock cruzó la barrera.</div>
+        {{ graf_ranking | safe }}
+    </div>
+    <table>
+        <thead><tr>
+            <th>Código</th><th>Descripción</th><th>Rubro</th>
+            <th class="barra-celda">Días hasta cruzar</th>
+            <th class="num">Cadencia (d)</th><th class="num">Ventas prom./mes</th>
+        </tr></thead>
+        <tbody>
+        {% for r in ranking %}
+        <tr>
+            <td>{{ r.codigo }}</td>
+            <td>{{ r.descripcion }}</td>
+            <td>{{ r.rubro }}</td>
+            <td class="barra-celda">
+                <div class="barra" style="width:{{ r.dias_w }}%"></div>
+                <span style="font-size:8pt;color:var(--gris)">{{ r.dias | unidades }} d</span>
+            </td>
+            <td class="num">{{ r.cadencia | unidades }}</td>
+            <td class="num">{{ r.ventas_promedio | unidades }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

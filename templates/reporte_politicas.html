@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Alcance: <b>{{ meta.sucursal }}</b></span>
+    <span>Stock al: <b>{{ meta.fecha_stock }}</b></span>
+    <span>Demanda: <b>{{ meta.dias_demanda }} días</b></span>
+    <span>Lead time: <b>{{ meta.lead_time }} días</b></span>
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    <div class="kpi alerta"><div class="etiqueta">A reponer</div>
+        <div class="valor">{{ kpi.reponer | unidades }}</div>
+        <div class="detalle">compra sugerida {{ kpi.compra | pesos }}</div></div>
+    <div class="kpi"><div class="etiqueta">En exceso</div>
+        <div class="valor">{{ kpi.exceso | unidades }}</div>
+        <div class="detalle">{{ kpi.exceso_valor | pesos }} sobre el máx</div></div>
+    <div class="kpi"><div class="etiqueta">OK</div>
+        <div class="valor">{{ kpi.ok | unidades }}</div></div>
+    <div class="kpi"><div class="etiqueta">Ciclo reposición mediano</div>
+        <div class="valor">{{ kpi.ciclo }}</div></div>
+</div>
+
+{% if matriz %}
+<div class="seccion">
+    <h2>Matriz ABC × XYZ (SKU-sucursal)</h2>
+    <table>
+        <thead><tr><th>Clase</th><th class="num">X (estable)</th>
+            <th class="num">Y (variable)</th><th class="num">Z (errática)</th></tr></thead>
+        <tbody>
+        {% for fila in matriz %}
+        <tr><td>{{ fila.clase }}</td>
+            <td class="num">{{ fila.x | unidades }}</td>
+            <td class="num">{{ fila.y | unidades }}</td>
+            <td class="num">{{ fila.z | unidades }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if compras %}
+<div class="seccion">
+    <h2>Compras sugeridas (top {{ compras | length }})</h2>
+    <table>
+        <thead><tr><th>Código</th><th>Descripción</th><th>Suc.</th><th>ABC</th>
+            <th class="num">Stock</th><th class="num">Mín</th><th class="num">Ópt</th>
+            <th class="num">Comprar u.</th><th class="num">Comprar $</th></tr></thead>
+        <tbody>
+        {% for c in compras %}
+        <tr>
+            <td>{{ c.codigo }}</td><td>{{ c.descripcion }}</td><td>{{ c.suc }}</td>
+            <td>{{ c.abc }}</td>
+            <td class="num">{{ c.stock | unidades }}</td>
+            <td class="num">{{ c.minimo | unidades }}</td>
+            <td class="num">{{ c.optimo | unidades }}</td>
+            <td class="num rojo">{{ c.comprar | unidades }}</td>
+            <td class="num rojo">{{ c.comprar_valor | pesos }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr><td colspan="7">Total compra sugerida (todos los SKUs a reponer)</td>
+            <td class="num">{{ kpi.compra_u | unidades }}</td>
+            <td class="num">{{ kpi.compra | pesos }}</td></tr></tfoot>
+    </table>
+</div>
+{% endif %}
+
+{% if excesos %}
+<div class="seccion">
+    <h2>Mayores excesos (top {{ excesos | length }})</h2>
+    <table>
+        <thead><tr><th>Código</th><th>Descripción</th><th>Suc.</th>
+            <th class="num">Stock</th><th class="num">Máx</th>
+            <th class="num">Exceso u.</th><th class="num">Exceso $</th></tr></thead>
+        <tbody>
+        {% for e in excesos %}
+        <tr>
+            <td>{{ e.codigo }}</td><td>{{ e.descripcion }}</td><td>{{ e.suc }}</td>
+            <td class="num">{{ e.stock | unidades }}</td>
+            <td class="num">{{ e.maximo | unidades }}</td>
+            <td class="num">{{ e.exceso | unidades }}</td>
+            <td class="num">{{ e.exceso_valor | pesos }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

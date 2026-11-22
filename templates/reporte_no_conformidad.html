@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block estilos %}
+    .nc-cab { margin-bottom: 14px; font-size: 10pt; }
+    .nc-cab .fila { display: flex; gap: 6px; padding: 1px 0; }
+    .nc-cab .etq { font-weight: 600; min-width: 175px; }
+    .nc-cab .numero { font-family: "IBM Plex Mono", Consolas, monospace; font-size: 11.5pt;
+                      font-weight: 700; letter-spacing: 0.04em; }
+    .intro { text-align: justify; margin: 6px 0 12px; }
+    .tipo {
+        display: flex; align-items: center; gap: 10px; margin: 8px 0 14px;
+        border: 1.5px solid var(--tinta); border-radius: 4px; padding: 6px 10px;
+    }
+    .tipo .chip { width: 22px; height: 22px; border-radius: 50%;
+                  border: 1px solid var(--tinta); background: {{ tipo_color }}; }
+    .tipo .texto { font-weight: 700; font-size: 11pt; letter-spacing: 0.04em; }
+    .tipo .sev { color: var(--gris); font-size: 8.5pt; margin-left: auto; }
+    .bloque { margin-bottom: 12px; }
+    .bloque h3 { font-size: 10pt; margin-bottom: 3px; }
+    .bloque p { text-align: justify; white-space: pre-line; }
+    .requisito {
+        border-left: 3px solid var(--linea); padding: 4px 10px; margin-top: 4px;
+        color: var(--gris); font-size: 9pt; white-space: pre-line; text-align: justify;
+    }
+    ol.acciones { margin: 6px 0 0 22px; }
+    ol.acciones li { margin-bottom: 4px; text-align: justify; }
+    table.plazos td { font-size: 9pt; }
+    .firma { display: flex; gap: 24px; margin-top: 34px; }
+    .firma div { flex: 1; border-top: 1px solid var(--tinta); padding-top: 3px;
+                 font-size: 8.5pt; color: var(--gris); text-align: center; }
+    .notificado { margin-top: 18px; font-size: 9pt; }
+    .anexo { break-before: page; page-break-before: always; padding-top: 4px; }
+    .anexo > h2 { font-size: 12pt; border-bottom: 2px solid var(--tinta); padding-bottom: 4px;
+                  margin-bottom: 6px; }
+    .anexo h3 { font-size: 10pt; margin: 10px 0 4px; }
+    .anexo-meta { font-size: 8.5pt; color: var(--gris); margin: 2px 0 8px; }
+    .anexo-bloque { break-inside: avoid; margin-bottom: 14px; }
+    .anexo-kpis { display: flex; flex-wrap: wrap; gap: 4px 22px; font-size: 9pt; margin: 2px 0 8px; }
+    tr.destacado td { background: #fff3bf !important; font-weight: 600; }
+    @media screen { .anexo { margin-top: 36px; border-top: 3px dashed var(--linea); padding-top: 16px; } }
+    .huella { font-family: Consolas, monospace; font-size: 7.5pt; color: var(--gris);
+              margin-top: 10px; }
+{% endblock %}
+
+{% block metadatos %}{% endblock %}
+
+{% block cuerpo %}
+<div class="nc-cab">
+    <div class="fila"><span class="etq">Número:</span>
+        <span class="numero">{{ numero_impreso }}</span></div>
+    <div class="fila"><span class="etq">Fecha:</span><span>{{ fecha }}</span></div>
+    <div class="fila"><span class="etq">Área afectada:</span><span>{{ nc.area }}</span></div>
+    <div class="fila"><span class="etq">Responsable solicitante:</span>
+        <span>{{ nc.solicitante }}</span></div>
+    <div class="fila"><span class="etq">Sucursal:</span>
+        <span>{{ nc.sucursal_nombre }} ({{ nc.codigodepo }})</span></div>
+</div>
+
+<div class="seccion">
+    <h2>Descripción de la No Conformidad</h2>
+    <p class="intro">{{ nc.intro }}</p>
+
+    <div class="tipo">
+        <span class="chip"></span>
+        <span class="texto">TIPO DE NO CONFORMIDAD: {{ nc.tipo }}</span>
+        <span class="sev">Severidad {{ nc.tipo_severidad }} de {{ severidad_max }}</span>
+    </div>
+
+    <div class="bloque">
+        <h3>Hallazgo</h3>
+        <h3 style="font-weight:600;color:var(--gris);font-size:9pt">Requisito</h3>
+        <p><b>Punto {{ nc.req_codigo }}</b> — Referido a: {{ nc.req_titulo }}
+           <span style="color:var(--gris);font-size:8.5pt">(SOP versión {{ nc.sop_version }})</span></p>
+        {% if req_extracto %}<div class="requisito">{{ req_extracto }}</div>{% endif %}
+    </div>
+    <div class="bloque">
+        <h3 style="font-weight:600;color:var(--gris);font-size:9pt">Evidencia (hecho observado)</h3>
+        <p>{{ nc.evidencia_txt }}</p>
+    </div>
+    <div class="bloque">
+        <h3 style="font-weight:600;color:var(--gris);font-size:9pt">Desvío respecto del requisito</h3>
+        <p>{{ nc.desvio_txt }}</p>
+    </div>
+</div>
+
+<div class="seccion">
+    <h2>Criterios afectados</h2>
+    <p>Punto: {{ nc.req_codigo }} — Referido a: {{ nc.req_titulo }}</p>
+</div>
+
+{% if impactos %}
+<div class="seccion">
+    <h2>Impacto</h2>
+    <p>La no conformidad puede generar: {{ impactos }}</p>
+</div>
+{% endif %}
+
+<div class="seccion">
+    <h2>Acciones Correctivas / Recomendaciones</h2>
+    <p>Se recomienda implementar las siguientes acciones para corregir la desviación y
+       prevenir recurrencias:</p>
+    <ol class="acciones">
+        {% for a in acciones %}<li>{{ a }}</li>{% endfor %}
+    </ol>
+    <p style="margin-top:8px"><b>Responsable de la acción:</b> {{ nc.responsable_accion }}</p>
+</div>
+
+<div class="seccion">
+    <h2>Plazos (desde la notificación)</h2>
+    <table class="plazos">
+        <tbody>
+        <tr><td>Contención (corrección inmediata)</td><td>{{ plazo_contencion }}</td></tr>
+        <tr><td>Descargo: causa raíz y plan de acción (Reporte de Corrección)</td>
+            <td>{{ plazo_descargo }}</td></tr>
+        <tr><td>Implementación de acciones correctivas</td><td>{{ plazo_implementacion }}</td></tr>
+        </tbody>
+    </table>
+    {% if linea_base %}<p style="margin-top:6px;font-size:9pt;color:var(--gris)">
+        Línea base de medición: {{ linea_base }}</p>{% endif %}
+</div>
+
+{% if anexos %}
+<div class="seccion">
+    <h2>Anexos</h2>
+    <ol class="acciones">
+        {% for a in anexos %}<li>{{ a.titulo }}{% if a.corte_datos %} — datos al {{ a.corte_datos }}{% endif %}</li>{% endfor %}
+    </ol>
+</div>
+{% endif %}
+
+<p class="notificado">Queda debidamente notificado.</p>
+<div class="firma">
+    <div>Firma</div>
+    <div>Aclaración</div>
+    <div>Fecha y hora de recepción</div>
+</div>
+
+<div class="huella">NC {{ numero_impreso }} · huella del contenido SHA-256 {{ huella }}
+    · emitida {{ emitida }}</div>
+
+{% for a in anexos %}
+<div class="anexo">
+    <h2>Anexo {{ loop.index }} — {{ a.titulo }}</h2>
+    <p class="anexo-meta">NC {{ numero_impreso }} · generado por IQMerma el {{ a.generado_en[:16] | replace('T', ' ') }}</p>
+    {{ a.html | safe }}
+</div>
+{% endfor %}
+{% endblock %}

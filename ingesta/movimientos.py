@@ -6,12 +6,17 @@ Responsabilidades:
   2. Normalizar y validar los datos
   3. Detectar el período cubierto por el archivo
   4. Verificar duplicados contra periodos_ingesta
-  5. Insertar en DuckDB (movimientos + costo_sku_historial)
+  5. Insertar en DuckDB (movimientos)
   6. Registrar la ingesta en periodos_ingesta
 
 Uso desde Python:
-    from ingesta.movimientos import ingestar_movimientos
-    resultado = ingestar_movimientos("archivo.xlsx", proyecto="cliente_alfa")
+    from ingesta.movimientos import ingestar_movimientos, ingestar_libro_movimientos
+
+    # Un archivo = un período (una pestaña):
+    ingestar_movimientos("archivo.xlsx", proyecto="cliente_alfa")
+
+    # Un archivo con varias pestañas (una por mes) — una ingesta por hoja:
+    ingestar_libro_movimientos("2025.xlsx", proyecto="cliente_alfa")
 """
 
 import duckdb
@@ -64,25 +69,30 @@ def _get_connection(proyecto: str) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(db_path))
 
 
-def _leer_excel(filepath: str | Path) -> pd.DataFrame:
+def _leer_excel(source, sheet=0) -> pd.DataFrame:
     """
     Lee el Excel del ERP y retorna un DataFrame crudo.
+
+    Args:
+        source: ruta al archivo, o un pd.ExcelFile ya abierto (para carga
+                multi-pestaña eficiente — no reabre el libro por cada hoja).
+        sheet:  índice (0 por defecto) o nombre de la pestaña a leer.
+
     Maneja:
       - Archivos con filas vacías al inicio
       - COSTO con coma decimal (formato argentino)
       - Columnas extra que el ERP pueda agregar en el futuro
     """
-    filepath = Path(filepath)
-    if not filepath.exists():
-        raise FileNotFoundError(f"Archivo no encontrado: {filepath}")
-
-    # Intentar leer — openpyxl para .xlsx, xlrd para .xls legacy
     try:
-        df = pd.read_excel(
-            filepath,
-            dtype=str,          # leer todo como string para normalizar después
-            engine="openpyxl",
-        )
+        if isinstance(source, pd.ExcelFile):
+            df = pd.read_excel(source, dtype=str, sheet_name=sheet)
+        else:
+            filepath = Path(source)
+            if not filepath.exists():
+                raise FileNotFoundError(f"Archivo no encontrado: {filepath}")
+            df = pd.read_excel(filepath, dtype=str, engine="openpyxl", sheet_name=sheet)
+    except FileNotFoundError:
+        raise
     except Exception as e:
         raise ValueError(f"No se pudo leer el archivo: {e}")
 
@@ -102,11 +112,104 @@ def _validar_columnas(df: pd.DataFrame) -> list[str]:
     return sorted(obligatorias - presentes)
 
 
-def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
+def _periodo_de_hoja(sheet) -> tuple[int, int] | None:
+    """
+    Deduce (año, mes) del nombre de la pestaña: '11-25', '11-2025',
+    '2025-11', '01_26', etc. Retorna None si no matchea.
+    """
+    import re
+    if not isinstance(sheet, str):
+        return None
+    m = re.fullmatch(r"\s*(\d{1,4})[-/_](\d{1,4})\s*", sheet)
+    if not m:
+        return None
+    a, b = int(m.group(1)), int(m.group(2))
+    if 1 <= a <= 12:            # MM-YY / MM-YYYY
+        mes, anio = a, b
+    elif 1 <= b <= 12:          # YYYY-MM / YY-MM
+        mes, anio = b, a
+    else:
+        return None
+    if anio < 100:
+        anio += 2000
+    if not (2000 <= anio <= 2100):
+        return None
+    return anio, mes
+
+
+def _parsear_fechas(serie: pd.Series, esperado: tuple[int, int] | None):
+    """
+    Parsea FECHA tolerando formatos mixtos y corrigiendo swaps día/mes.
+
+    El caso real que motiva esto: un Excel "trabajado" en locale US guarda
+    '3/11/2025' (3-nov) como datetime 11-mar (swap), mientras los días >12
+    quedan como texto DD/MM. Un parseo ingenuo desparrama el mes por todo el
+    año y descarta filas.
+
+    Estrategia por celda, en orden de prioridad:
+      1. ISO (celdas datetime nativas: 'YYYY-MM-DD ...')
+      2. texto DD/MM/YYYY
+      3. texto MM/DD/YYYY
+      4. swap del ISO (día<->mes) — solo si cae en el período esperado
+    Si hay período esperado (nombre de la pestaña o mes modal de las fechas
+    inequívocas, día>12), toda celda con un candidato dentro del período lo
+    usa; el swap solo se acepta con período esperado.
+
+    Returns:
+        (fechas: Series[datetime], corregidas: int) — corregidas = celdas
+        donde se aplicó el des-swap.
+    """
+    s = serie.astype("string").str.strip()
+
+    iso  = pd.to_datetime(s, format="ISO8601", errors="coerce")
+    ddmm = pd.to_datetime(s, format="%d/%m/%Y", errors="coerce")
+    mmdd = pd.to_datetime(s, format="%m/%d/%Y", errors="coerce")
+
+    # candidato "des-swapeado" del ISO (11-mar → 3-nov)
+    iso_swap = pd.to_datetime(
+        pd.DataFrame({
+            "year": iso.dt.year, "month": iso.dt.day, "day": iso.dt.month,
+        }),
+        errors="coerce",
+    )
+
+    fechas = iso.fillna(ddmm).fillna(mmdd)
+
+    # período esperado: pestaña, o mes modal de las fechas inequívocas (día>12)
+    if esperado is None:
+        inequivocas = fechas[fechas.dt.day > 12]
+        if len(inequivocas) >= 10:
+            modal = inequivocas.dt.to_period("M").mode()
+            if len(modal):
+                esperado = (modal[0].year, modal[0].month)
+
+    corregidas = 0
+    if esperado is not None:
+        anio, mes = esperado
+
+        def en_periodo(cand):
+            return cand.notna() & (cand.dt.year == anio) & (cand.dt.month == mes)
+
+        eleccion = fechas.copy()
+        ok = en_periodo(eleccion)
+        for cand, es_swap in ((iso, False), (ddmm, False), (mmdd, False), (iso_swap, True)):
+            mejora = ~ok & en_periodo(cand)
+            if mejora.any():
+                eleccion[mejora] = cand[mejora]
+                if es_swap:
+                    corregidas += int(mejora.sum())
+                ok |= mejora
+        fechas = eleccion
+
+    return fechas, corregidas
+
+
+def _normalizar(df: pd.DataFrame,
+                periodo_esperado: tuple[int, int] | None = None) -> pd.DataFrame:
     """
     Transforma el DataFrame crudo en el formato interno de MermaIQ:
       - Renombra columnas
-      - Parsea fechas (formato DD/M/YYYY del ERP)
+      - Parsea fechas (formatos mixtos, con corrección de swap día/mes)
       - Convierte COSTO de coma decimal a float
       - Convierte INGRESO/EGRESO a numérico
       - Recalcula DIFERENCIA internamente (no confiar en el ERP)
@@ -124,15 +227,26 @@ def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].str.strip().replace("nan", None)
 
-    # Parsear fecha — formato DD/M/YYYY o DD/MM/YYYY
-    df["fecha"] = pd.to_datetime(df["fecha"], dayfirst=True, errors="coerce")
+    # Parsear fecha — formatos mixtos + corrección de swap día/mes
+    df["fecha"], corregidas = _parsear_fechas(df["fecha"], periodo_esperado)
+    if corregidas > 0:
+        print(f"  [warn] {corregidas} fechas corregidas por swap día/mes "
+              f"(datetimes de Excel en locale US)")
 
     # Eliminar filas sin fecha (encabezados repetidos, filas vacías, etc.)
     filas_antes = len(df)
     df = df.dropna(subset=["fecha"])
     filas_descartadas = filas_antes - len(df)
     if filas_descartadas > 0:
-        print(f"  [info] {filas_descartadas} filas descartadas (sin fecha válida)")
+        print(f"  [warn] {filas_descartadas} filas descartadas (sin fecha válida)")
+
+    # Sanidad: las filas deberían concentrarse en un solo mes
+    if len(df):
+        meses = df["fecha"].dt.to_period("M")
+        share_modal = (meses == meses.mode()[0]).mean()
+        if share_modal < 0.95:
+            print(f"  [ALERTA] Solo {share_modal:.0%} de las filas caen en el mes "
+                  f"principal ({meses.mode()[0]}) — revisar formato de fechas del archivo.")
 
     # Convertir COSTO: coma decimal argentina → float
     # "7437,933884" → 7437.933884
@@ -148,6 +262,19 @@ def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
     for col in ["ingreso", "egreso"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    # Bug del ERP: los movimientos MD (Dif. de camión) exportan el egreso en
+    # negativo. Como diferencia = ingreso - egreso, un egreso negativo se
+    # resta como si fuera un ingreso — la pata de origen del remito MD queda
+    # con signo invertido (ver core/distribucion/diferencias.py, que ya
+    # esquivaba esto calculando aparte). Se corrige acá para que quede bien
+    # en cualquier cálculo que use `diferencia` o `egreso`, no solo ahí.
+    if "tipo" in df.columns and "egreso" in df.columns:
+        es_md_negativo = (df["tipo"] == "MD") & (df["egreso"] < 0)
+        if es_md_negativo.any():
+            df.loc[es_md_negativo, "egreso"] = df.loc[es_md_negativo, "egreso"].abs()
+            print(f"  [warn] {es_md_negativo.sum()} egresos MD negativos corregidos "
+                  f"(bug de exportación del ERP, no del archivo)")
 
     # Recalcular diferencia internamente (no confiar en el ERP)
     df["diferencia"] = df["ingreso"] - df["egreso"]
@@ -183,36 +310,6 @@ def _verificar_duplicado(conn: duckdb.DuckDBPyConnection, periodo: str) -> bool:
         AND estado = 'ok'
     """, [periodo]).fetchone()
     return result[0] > 0
-
-
-def _actualizar_costo_historial(
-    conn: duckdb.DuckDBPyConnection,
-    df: pd.DataFrame
-) -> int:
-    """
-    Extrae remitos RE/RI con costo > 0 y los inserta en costo_sku_historial.
-    Retorna cantidad de registros insertados.
-    """
-    remitos = df[
-        (df["tipomov"] == "REM") &
-        (df["tipo"].isin(["RE", "RI"])) &
-        (df["costo"].notna()) &
-        (df["costo"] > 0)
-    ][["codigo", "codigodepo", "fecha", "costo", "numero"]].copy()
-
-    if remitos.empty:
-        return 0
-
-    remitos = remitos.rename(columns={"numero": "numero_remito"})
-    remitos["fecha_ingesta"] = datetime.now(timezone.utc)
-
-    conn.execute("""
-        INSERT INTO costo_sku_historial (codigo, codigodepo, fecha, costo, numero_remito, fecha_ingesta)
-        SELECT codigo, codigodepo, fecha, costo, numero_remito, fecha_ingesta
-        FROM remitos
-    """)
-
-    return len(remitos)
 
 
 def _insertar_movimientos(
@@ -278,6 +375,8 @@ def ingestar_movimientos(
     filepath: str | Path,
     proyecto: str,
     forzar: bool = False,
+    sheet=0,
+    libro: "pd.ExcelFile | None" = None,
 ) -> dict:
     """
     Carga una planilla de movimientos del ERP en DuckDB.
@@ -286,12 +385,16 @@ def ingestar_movimientos(
         filepath:  Ruta al archivo .xlsx del ERP
         proyecto:  Nombre del proyecto (carpeta bajo projects/)
         forzar:    Si True, reemplaza el período aunque ya exista
+        sheet:     Pestaña a leer (índice o nombre). Default: la primera.
+        libro:     pd.ExcelFile ya abierto (uso interno de
+                   ingestar_libro_movimientos; evita reabrir por hoja).
 
     Returns:
-        dict con keys: periodo, registros, remitos_historial, advertencias
+        dict con keys: periodo, registros, sucursales, tipomov, advertencias
     """
     filepath = Path(filepath)
-    archivo_origen = filepath.name
+    # archivo_origen incluye la pestaña cuando no es la primera (para auditoría)
+    archivo_origen = filepath.name if sheet in (0, None) else f"{filepath.name}#{sheet}"
     advertencias = []
 
     print(f"\n{'='*55}")
@@ -301,7 +404,7 @@ def ingestar_movimientos(
 
     # 1. Leer
     print("  Leyendo archivo...")
-    df_crudo = _leer_excel(filepath)
+    df_crudo = _leer_excel(libro if libro is not None else filepath, sheet=sheet)
     print(f"  Filas leídas: {len(df_crudo)}")
 
     # 2. Validar columnas
@@ -309,9 +412,13 @@ def ingestar_movimientos(
     if faltantes:
         raise ValueError(f"Columnas obligatorias faltantes: {faltantes}")
 
-    # 3. Normalizar
+    # 3. Normalizar (el nombre de la pestaña define el período esperado
+    #    para validar/corregir las fechas)
     print("  Normalizando datos...")
-    df = _normalizar(df_crudo)
+    periodo_esperado = _periodo_de_hoja(sheet)
+    if periodo_esperado:
+        print(f"  Período esperado (pestaña): {periodo_esperado[0]}-{periodo_esperado[1]:02d}")
+    df = _normalizar(df_crudo, periodo_esperado)
     print(f"  Filas válidas: {len(df)}")
 
     # 4. Resumen previo a la carga
@@ -351,12 +458,7 @@ def ingestar_movimientos(
     registros = _insertar_movimientos(conn, df, periodo, archivo_origen)
     print(f"  ✓ {registros} registros insertados")
 
-    # 8. Actualizar costo_sku_historial
-    print("  Actualizando historial de costos (remitos RE/RI)...")
-    remitos_n = _actualizar_costo_historial(conn, df)
-    print(f"  ✓ {remitos_n} costos registrados en historial")
-
-    # 9. Registrar ingesta
+    # 8. Registrar ingesta
     _registrar_ingesta(conn, periodo, archivo_origen, registros)
     conn.close()
 
@@ -366,8 +468,73 @@ def ingestar_movimientos(
     return {
         "periodo": periodo,
         "registros": registros,
-        "remitos_historial": remitos_n,
         "sucursales": sucursales,
         "tipomov": tipomov_counts,
         "advertencias": advertencias,
+    }
+
+
+def ingestar_libro_movimientos(
+    filepath: str | Path,
+    proyecto: str,
+    forzar: bool = False,
+) -> dict:
+    """
+    Carga un Excel de movimientos con VARIAS pestañas (una por período/mes),
+    haciendo una ingesta independiente por cada hoja.
+
+    Cada pestaña se detecta y deduplica por su propio período — respeta el
+    modelo mensual. El libro se abre una sola vez (eficiente para archivos
+    pesados). Una pestaña que falle (ej: período ya cargado sin forzar, o una
+    hoja que no es de datos) no corta la carga de las demás: se reporta.
+
+    Args:
+        filepath:  Ruta al .xlsx con múltiples pestañas
+        proyecto:  Nombre del proyecto
+        forzar:    Si True, reemplaza los períodos que ya existan
+
+    Returns:
+        dict con keys: archivo, hojas, cargadas, registros_total, detalle, errores
+    """
+    filepath = Path(filepath)
+    archivo_origen = filepath.name
+
+    print(f"\n{'#'*55}")
+    print(f"  Ingesta de LIBRO de movimientos: {archivo_origen}")
+    print(f"  Proyecto: {proyecto}")
+    print(f"{'#'*55}")
+
+    libro = pd.ExcelFile(filepath, engine="openpyxl")
+    hojas = list(libro.sheet_names)
+    print(f"  Pestañas encontradas ({len(hojas)}): {hojas}")
+
+    resultados, errores = [], []
+    try:
+        for hoja in hojas:
+            try:
+                r = ingestar_movimientos(
+                    filepath, proyecto, forzar=forzar, sheet=hoja, libro=libro
+                )
+                resultados.append({"hoja": hoja, **r})
+            except Exception as e:
+                print(f"  [error] pestaña '{hoja}': {e}")
+                errores.append({"hoja": hoja, "error": str(e)})
+    finally:
+        libro.close()
+
+    total = sum(r["registros"] for r in resultados)
+    print(f"\n{'#'*55}")
+    print(f"  Libro completo: {len(resultados)}/{len(hojas)} pestañas OK — "
+          f"{total} movimientos")
+    if errores:
+        print(f"  Pestañas con error: {[e['hoja'] for e in errores]}")
+    print(f"{'#'*55}\n")
+
+    return {
+        "archivo": archivo_origen,
+        "hojas": len(hojas),
+        "cargadas": len(resultados),
+        "registros_total": total,
+        "detalle": resultados,
+        "errores": errores,
     }

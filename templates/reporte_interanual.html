@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{# Una fila por ítem: valor + barra por año, y las variaciones al final.
+   `con_abs` agrega la columna de variación absoluta (el mes a mes no la usa). #}
+{% macro tabla(items, encabezado, con_abs=True) -%}
+<table>
+    <thead><tr>
+        <th>{{ encabezado }}</th>
+        {% for a in anios %}<th class="num" colspan="2">{{ a }}</th>{% endfor %}
+        {% if con_abs %}<th class="num">Δ</th>{% endif %}
+        <th class="num">Δ %</th>
+    </tr></thead>
+    <tbody>
+    {% for i in items %}
+    <tr>
+        <td>{{ i.etiqueta }}</td>
+        {% for v in i.valores %}
+        <td class="num">{{ v }}</td>
+        <td class="barra-celda" style="min-width:54px">
+            <div class="barra {{ 'gris' if not loop.last }}"
+                 style="width:{{ i.barras[loop.index0] }}%"></div>
+        </td>
+        {% endfor %}
+        {% if con_abs %}<td class="num">{{ i.var_abs }}</td>{% endif %}
+        <td class="num {{ 'verde' if (i.var_pct or 0) >= 0 else 'rojo' }}">
+            {{ '%+.1f%%' | format(i.var_pct) if i.var_pct is not none else '—' }}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{%- endmacro %}
+
+{% block metadatos %}
+    <span>Años: <b>{{ meta.anios }}</b></span>
+    <span>Métrica: <b>{{ meta.metrica }}</b></span>
+    <span>Meses: <b>{{ meta.meses }}</b></span>
+    {% if meta.dia_corte %}<span>Recortado al día {{ meta.dia_corte }}{% if meta.meses_dia_corte %}: <b>{{ meta.meses_dia_corte }}</b>{% else %}<b> (todos los meses)</b>{% endif %}</span>{% endif %}
+    {% if meta.valorizacion %}<span>Precios constantes: <b>{{ meta.valorizacion }}</b></span>{% endif %}
+    {% if meta.sucursales_filtro %}<span>Sucursales: <b>{{ meta.sucursales_filtro }}</b></span>{% endif %}
+    {% if meta.recorte %}<span>Recorte: <b>{{ meta.recorte }}</b></span>{% endif %}
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    {% for t in totales %}
+    <div class="kpi {% if loop.last %}alerta{% endif %}">
+        <div class="etiqueta">{{ t.anio }}</div>
+        <div class="valor">{{ t.valor }}</div>
+        {% if t.variacion is not none %}
+        <div class="detalle"><span class="{{ 'verde' if t.variacion >= 0 else 'rojo' }}">
+            {{ '%+.1f%%' | format(t.variacion) }}</span> vs {{ totales[loop.index0 - 1].anio }}
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+{% if es_pesos %}
+<p style="font-size:8.5pt;color:var(--gris);margin:-8px 0 16px">
+    Todos los años se valorizan con el <b>mismo</b> snapshot de precios: la
+    comparación es a precios constantes, así que las diferencias son de volumen
+    y de mix, no de inflación.
+</p>
+{% endif %}
+
+{% if meses %}
+<div class="seccion">
+    <h2>Mes a mes</h2>
+    {% if graf_meses %}<div class="grafico">{{ graf_meses | safe }}</div>{% endif %}
+    {{ tabla(meses, "Mes", con_abs=False) }}
+</div>
+{% endif %}
+
+{% if ranking %}
+<div class="seccion">
+    <h2>Por {{ dimension | lower }}
+        <span style="font-weight:400;color:var(--gris);font-size:9pt">
+            (top {{ ranking | length }} del año más reciente)</span></h2>
+    {{ tabla(ranking, dimension) }}
+</div>
+{% endif %}
+
+{% if sucursales %}
+<div class="seccion">
+    <h2>Comparación entre sucursales</h2>
+    {% if graf_sucursales %}
+    <div class="grafico">
+        <div class="pie-grafico">Variación {{ anios[0] }} → {{ anios[-1] }} por sucursal
+            — a la derecha las que crecieron, a la izquierda las que cayeron.</div>
+        {{ graf_sucursales | safe }}
+    </div>
+    {% endif %}
+    {{ tabla(sucursales, "Sucursal") }}
+</div>
+{% endif %}
+
+{% if remitos %}
+<div class="seccion">
+    <h2>Ventas contra reposición</h2>
+    <div class="kpis" style="margin-top:0">
+        <div class="kpi"><div class="etiqueta">Variación de ventas</div>
+            <div class="valor {{ 'verde' if (remitos.var_venta or 0) >= 0 else 'rojo' }}">
+                {{ '%+.1f%%' | format(remitos.var_venta) if remitos.var_venta is not none else '—' }}</div></div>
+        <div class="kpi"><div class="etiqueta">Variación de remitos</div>
+            <div class="valor {{ 'verde' if (remitos.var_remito or 0) >= 0 else 'rojo' }}">
+                {{ '%+.1f%%' | format(remitos.var_remito) if remitos.var_remito is not none else '—' }}</div></div>
+        <div class="kpi"><div class="etiqueta">Brecha</div>
+            <div class="valor">
+                {{ '%+.1f pp' | format(remitos.brecha) if remitos.brecha is not none else '—' }}</div>
+            <div class="detalle">remitos − ventas</div></div>
+    </div>
+
+    <p style="font-size:8.5pt;color:var(--gris);margin:0 0 12px">
+        Muestra si las dos series se movieron juntas; <b>no prueba causalidad</b>.
+        {% if remitos.excluidos %}Excluye los centros de distribución
+        ({{ remitos.excluidos }}): el ingreso al CD desde el proveedor no es
+        mercadería que le llegue a una boca.{% endif %}
+    </p>
+
+    {% if remitos.grafico %}
+    <div class="grafico">
+        <div class="pie-grafico">Barras = ventas (eje izquierdo) ·
+            líneas = remitos recibidos (eje derecho).</div>
+        {{ remitos.grafico | safe }}
+    </div>
+    {% endif %}
+
+    <table>
+        <thead><tr>
+            <th>Mes</th>
+            {% for a in anios %}
+            <th class="num" colspan="3">{{ a }} — venta / remito / recibido por vendido</th>
+            {% endfor %}
+        </tr></thead>
+        <tbody>
+        {% for f in remitos.filas %}
+        <tr>
+            <td>{{ f.etiqueta }}</td>
+            {% for x in f.anios %}
+            <td class="num">{{ x.ventas }}
+                <div class="barra" style="width:{{ x.ventas_w }}%"></div></td>
+            <td class="num">{{ x.remitos }}
+                <div class="barra venta" style="width:{{ x.remitos_w }}%"></div></td>
+            <td class="num">{{ x.cobertura }}</td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr>
+            <td>Total</td>
+            {% for t in remitos.totales %}
+            <td class="num">{{ t.ventas }}</td>
+            <td class="num">{{ t.remitos }}</td>
+            <td></td>
+            {% endfor %}
+        </tr></tfoot>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

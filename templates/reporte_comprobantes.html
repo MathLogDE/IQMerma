@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Período: <b>{{ meta.desde }} → {{ meta.hasta }}</b></span>
+    {% if meta.valorizacion %}<span>Precios constantes: <b>{{ meta.valorizacion }}</b></span>{% endif %}
+    {% if meta.sucursales_filtro %}<span>Sucursales: <b>{{ meta.sucursales_filtro }}</b></span>{% endif %}
+    {% if meta.tipos_filtro %}<span>Tipos de comprobante: <b>{{ meta.tipos_filtro }}</b></span>{% endif %}
+    {% if meta.meses_filtro %}<span>Meses: <b>{{ meta.meses_filtro }}</b></span>{% endif %}
+    {% if meta.recorte %}<span>Recorte: <b>{{ meta.recorte }}</b></span>{% endif %}
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    <div class="kpi"><div class="etiqueta">Sucursales</div>
+        <div class="valor">{{ kpi.sucursales }}</div></div>
+    <div class="kpi"><div class="etiqueta">Tipos de comprobante</div>
+        <div class="valor">{{ kpi.tipos }}</div></div>
+    <div class="kpi"><div class="etiqueta">Comprobantes</div>
+        <div class="valor">{{ kpi.comprobantes | unidades }}</div></div>
+    <div class="kpi alerta"><div class="etiqueta">Ticket promedio</div>
+        <div class="valor">{{ kpi.ticket_promedio | pesos }}</div></div>
+</div>
+
+{% if por_sucursal %}
+<div class="seccion">
+    <h2>Por sucursal</h2>
+    {% if graf_sucursal %}
+    <div class="grafico">
+        <div class="pie-grafico">Cantidad de comprobantes por sucursal.</div>
+        {{ graf_sucursal | safe }}
+    </div>
+    {% endif %}
+    <table>
+        <thead><tr>
+            <th>Sucursal</th>
+            <th class="num" colspan="2">Comprobantes</th>
+            <th class="num">Referencias prom.</th>
+            <th class="num">Unidades prom.</th>
+            <th class="num">Ticket promedio</th>
+        </tr></thead>
+        <tbody>
+        {% for f in por_sucursal %}
+        <tr>
+            <td>{{ f.sucursal }}</td>
+            <td class="num">{{ f.cantidad }}</td>
+            <td class="barra-celda" style="min-width:70px">
+                <div class="barra" style="width:{{ f.cantidad_w }}%"></div></td>
+            <td class="num">{{ f.referencias }}</td>
+            <td class="num">{{ f.unidades }}</td>
+            <td class="num">{{ f.ticket }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if por_tipo %}
+<div class="seccion">
+    <h2>Por tipo de comprobante</h2>
+    <table>
+        <thead><tr>
+            <th>Tipo</th>
+            <th>Categoría</th>
+            <th class="num">Comprobantes</th>
+            <th class="num">Referencias prom.</th>
+            <th class="num">Unidades prom.</th>
+            <th class="num">Ticket promedio</th>
+        </tr></thead>
+        <tbody>
+        {% for f in por_tipo %}
+        <tr>
+            <td>{{ f.tipo }}</td>
+            <td>{{ f.categoria }}</td>
+            <td class="num">{{ f.cantidad }}</td>
+            <td class="num">{{ f.referencias }}</td>
+            <td class="num">{{ f.unidades }}</td>
+            <td class="num">{{ f.ticket }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% for ev in evolucion_secciones %}
+<div class="seccion">
+    <h2>Evolución mensual — {{ ev.titulo }}</h2>
+    <div class="grafico">
+        {% if ev.por_sucursal %}<div class="pie-grafico">Todas las sucursales.</div>{% endif %}
+        {{ ev.combinado | safe }}
+    </div>
+    {% if ev.desagrupado %}
+    <div class="grafico">
+        <div class="pie-grafico">Todas las sucursales, desagrupado por sucursal y año.</div>
+        {{ ev.desagrupado | safe }}
+    </div>
+    {% endif %}
+    {% for s in ev.por_sucursal %}
+    <div class="grafico">
+        <div class="pie-grafico">{{ s.sucursal }}.</div>
+        {{ s.svg | safe }}
+    </div>
+    {% endfor %}
+</div>
+{% endfor %}
+
+{% if canasta %}
+<div class="seccion">
+    <h2>Afinidad entre productos (canasta)
+        <span style="font-weight:400;color:var(--gris);font-size:9pt">
+            (pares más frecuentes en el mismo comprobante)</span></h2>
+    {% if graf_canasta %}
+    <div class="grafico">
+        <div class="pie-grafico">Comprobantes que contienen ambos productos del par.</div>
+        {{ graf_canasta | safe }}
+    </div>
+    {% endif %}
+    <table>
+        <thead><tr>
+            <th>Par de productos</th>
+            <th class="num">Comprobantes conjuntos</th>
+            <th class="num">Soporte</th>
+            <th class="num">Lift</th>
+        </tr></thead>
+        <tbody>
+        {% for f in canasta %}
+        <tr>
+            <td>{{ f.par }}</td>
+            <td class="num">{{ f.comprobantes }}</td>
+            <td class="num">{{ f.soporte }}</td>
+            <td class="num">{{ f.lift }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <p style="font-size:8.5pt;color:var(--gris);margin-top:6px">
+        Lift &gt; 1 = el par aparece junto más de lo que la casualidad
+        explicaría; soporte = % de comprobantes del recorte que tienen el par.
+    </p>
+</div>
+{% endif %}
+{% endblock %}

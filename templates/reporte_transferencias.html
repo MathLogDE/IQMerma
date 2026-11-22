@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block metadatos %}
+    <span>Stock al: <b>{{ meta.fecha_stock }}</b></span>
+    <span>Demanda: <b>{{ meta.dias_demanda }} días</b></span>
+    <span>Sugerencias: <b>{{ meta.n_sugerencias }}</b></span>
+{% endblock %}
+
+{% block cuerpo %}
+<div class="kpis">
+    <div class="kpi"><div class="etiqueta">SKUs a redistribuir</div>
+        <div class="valor">{{ kpi.skus | unidades }}</div></div>
+    <div class="kpi"><div class="etiqueta">Unidades</div>
+        <div class="valor">{{ kpi.unidades | unidades }}</div></div>
+    <div class="kpi alerta"><div class="etiqueta">Valor a costo</div>
+        <div class="valor">{{ kpi.valor | pesos }}</div>
+        <div class="detalle">reposición sin comprar</div></div>
+</div>
+
+{% for ruta in rutas %}
+<div class="seccion">
+    <h2>{{ ruta.origen }} → {{ ruta.destino }}
+        <span style="font-weight:400;color:var(--gris);font-size:9pt">
+            ({{ ruta.lineas | length }} SKUs · {{ ruta.unidades | unidades }} u. · {{ ruta.valor | pesos }})
+        </span></h2>
+    <table>
+        <thead><tr><th>Código</th><th>Descripción</th><th>Rubro</th><th>ABC</th>
+            <th class="num">Enviar u.</th><th class="num">Valor $</th>
+            <th class="num">Stock origen</th><th class="num">Stock destino</th>
+            <th style="width:70px">✓</th></tr></thead>
+        <tbody>
+        {% for i in ruta.lineas %}
+        <tr>
+            <td>{{ i.codigo }}</td>
+            <td>{{ i.descripcion }}</td>
+            <td>{{ i.rubro }}</td>
+            <td>{{ i.abc }}</td>
+            <td class="num rojo"><b>{{ i.unidades | unidades }}</b></td>
+            <td class="num">{{ i.valor | pesos }}</td>
+            <td class="num">{{ i.stock_origen | unidades }}</td>
+            <td class="num">{{ i.stock_destino | unidades }}</td>
+            <td></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endfor %}
+{% endblock %}

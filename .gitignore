@@ -4,6 +4,13 @@
 projects/
 *.duckdb
 
+# Credenciales de acceso web (usuarios, hashes de contraseña, clave de
+# cookie) — nunca al repo. auth/usuarios.ejemplo.yaml sí se versiona.
+auth/usuarios.yaml
+
+# Contraseña de aplicación de Gmail para notificar NC (core/nc_mail.py)
+auth/smtp.json
+
 # Exports generados
 exports/
 
@@ -21,3 +28,6 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Salidas de trabajo con documentos de clientes (SOP, anexos) — nunca al repo
+Claude outputs/
